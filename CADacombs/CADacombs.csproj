@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetExt>.rhp</TargetExt>
+    <TargetFramework>net48</TargetFramework>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AssemblyName>CADacombs</AssemblyName>
+	
+    <Title>CADacombs for Rhino</Title>
+    <Version>0.2.0</Version>
+    <Description>A growing collection of tools.</Description>
+    <Company>Steven P. Burzinski</Company>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" />
+    <PackageReference Include="Eto.Forms" Version="2.7.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copies the RUI file to the build output folder so Yak packages it -->
+    <None Update="CADacombs.rui;manifest.yml;icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

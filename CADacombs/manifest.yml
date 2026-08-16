@@ -1,0 +1,23 @@
+---
+name: CADacombs.Rhino
+version: $version
+authors:
+- Steven P. Burzinski
+license: LGPL-3.0-or-later
+url: https://github.com/CADacombs/rhinopython
+icon: icon.png
+keywords:
+- guid:274aafc3-84b3-47a6-86af-dac682ff0c84
+- endbulge
+- nurbs
+- curve
+- surface
+description: |
+  A growing collection of tools.
+  
+  Included commands:
+  • spb_EndBulge: An alternative to the native _EndBulge command, featuring dialog controls instead of graphics window grip translation.
+
+  Please direct any questions or bug reports to the Rhino forum (discourse.mcneel.com) by tagging or PMing @spb.
+
+  Licensed under the GNU LGPLv3. See the included LICENSE.txt file for details.
