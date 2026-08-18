@@ -43,6 +43,8 @@ namespace CADacombs.Core
         protected string activeStepperKey = null;
         protected Dictionary<string, int> sliderPrevVals = new Dictionary<string, int>();
 
+        protected int _lastClickedCont = 0;
+
         public EndBulgeConduit BaseConduit { get; set; }
 
         public EndBulgeDialog(bool isSurface = false)
@@ -81,29 +83,27 @@ namespace CADacombs.Core
             string termLow = isSurface ? "edge" : "end";
             Font smallFont = new Font(SystemFont.Default, 4);
 
-            // Continuity Radio Buttons
             string[] contList = { "None", "G0", "G1", "G2", "G3" };
             
-            radioButtonLists["idxCont_Picked"] = new RadioButtonList { Spacing = new Size(4, 4) };
+            // Radio button Spacing kept at 8 to maintain visual grouping without blowing out the width
+            radioButtonLists["idxCont_Picked"] = new RadioButtonList { Spacing = new Size(8, 4) };
             radioButtonLists["idxCont_Picked"].DataStore = contList;
             radioButtonLists["idxCont_Picked"].SelectedIndex = EndBulgeOptions.ContinuityPicked;
             radioButtonLists["idxCont_Picked"].SelectedIndexChanged += OnContinuityChanged;
             labels["idxCont_Picked"] = new Label { Text = $"Picked {termLow}:" };
 
-            radioButtonLists["idxCont_Opp"] = new RadioButtonList { Spacing = new Size(4, 4) };
+            radioButtonLists["idxCont_Opp"] = new RadioButtonList { Spacing = new Size(8, 4) };
             radioButtonLists["idxCont_Opp"].DataStore = contList;
             radioButtonLists["idxCont_Opp"].SelectedIndex = EndBulgeOptions.ContinuityOpp;
             radioButtonLists["idxCont_Opp"].SelectedIndexChanged += OnContinuityChanged;
             labels["idxCont_Opp"] = new Label { Text = $"Opp. {termLow}:" };
 
-            // Linked Ends
             radioButtonLists["bLinkedEnds"] = new RadioButtonList { Orientation = Orientation.Horizontal, Spacing = new Size(16, 4) };
             radioButtonLists["bLinkedEnds"].DataStore = new[] { "Independent", "Linked" };
             radioButtonLists["bLinkedEnds"].SelectedIndex = EndBulgeOptions.LinkedEnds ? 1 : 0;
             radioButtonLists["bLinkedEnds"].SelectedIndexChanged += OnLinkedModeChanged;
             labels["bLinkedEnds"] = new Label { Text = $"Adjust {termLow}s:" };
 
-            // Slider Steps & Increment
             labels["fIncrement"] = new Label { Text = "Incr.:" };
             textBoxes["fIncrement"] = new TextBox { Text = EndBulgeOptions.Increment.ToString() };
             textBoxes["fIncrement"].TextChanged += OnIncrementTextChanged;
@@ -114,7 +114,6 @@ namespace CADacombs.Core
             dropDowns["iSliderSteps"].SelectedIndex = EndBulgeOptions.SliderStepsIndex;
             dropDowns["iSliderSteps"].SelectedIndexChanged += OnSliderStepsChanged;
 
-            // Homemade Stepper Generator
             void CreateHomemadeStepper(string sKey, string labelText, bool isScale, double initVal)
             {
                 labels[sKey] = new Label { Text = labelText };
@@ -123,13 +122,12 @@ namespace CADacombs.Core
                 if (isScale) textBoxes[sKey].TextChanged += OnScaleTextChanged;
                 else textBoxes[sKey].TextChanged += OnSlideTextChanged;
 
-                // Slider
                 sliderPrevVals[sKey] = 0;
-                sliders[sKey] = new Slider { Width = 132, SnapToTick = true, TickFrequency = 1 };
+                // REMOVED 'Width = 132' so the sliders can scale freely to match the top row
+                sliders[sKey] = new Slider { SnapToTick = true, TickFrequency = 1 };
                 sliders[sKey].ValueChanged += (s, e) => OnJogSliderChanged(sKey);
                 sliders[sKey].MouseUp += (s, e) => ZeroSlider(sKey);
 
-                // Up/Down Buttons
                 btnUp[sKey] = new Button { Text = "▲", Width = 16, Height = 12, Font = smallFont, MinimumSize = new Size(16, 12) };
                 btnDown[sKey] = new Button { Text = "▼", Width = 16, Height = 12, Font = smallFont, MinimumSize = new Size(16, 12) };
 
@@ -152,7 +150,6 @@ namespace CADacombs.Core
 
             UpdateSliderRanges();
 
-            // Display Options
             checkBoxes["bShowGeom"] = new CheckBox { Text = isSurface ? "Surface" : "Curve", Checked = EndBulgeOptions.ShowGeom };
             checkBoxes["bShowGeom"].CheckedChanged += OnDisplayCheckedChanged;
 
@@ -170,20 +167,19 @@ namespace CADacombs.Core
             numericSteppers["iGraphDensity"] = new NumericStepper { DecimalPlaces = 0, MinValue = 0, MaxValue = 100, Value = EndBulgeOptions.GraphDensity };
             numericSteppers["iGraphDensity"].ValueChanged += OnDisplayCheckedChanged;
 
-            // Global Options
             checkBoxes["bDeleteInput"] = new CheckBox { Text = "Delete input", Checked = EndBulgeOptions.DeleteInput };
             checkBoxes["bEcho"] = new CheckBox { Text = "Echo", Checked = EndBulgeOptions.Echo };
 
-            // Formatting widths
             foreach (var k in new[] { "fIncrement", "fScale_Picked", "fSlideG2_Picked", "fSlideG3_Picked", "fScale_Opp", "fSlideG2_Opp", "fSlideG3_Opp" })
                 labels[k].Width = 50;
 
-            textBoxes["fIncrement"].Width = 80;
+            // SHRUNK fixed widths so they don't overpower the top row
+            textBoxes["fIncrement"].Width = 50;
             labels["iSliderSteps"].Width = 64;
             dropDowns["iSliderSteps"].Width = 60;
 
             foreach (var k in new[] { "fScale_Picked", "fSlideG2_Picked", "fSlideG3_Picked", "fScale_Opp", "fSlideG2_Opp", "fSlideG3_Opp" })
-                textBoxes[k].Width = 64;
+                textBoxes[k].Width = 60;
 
             numericSteppers["iGraphScale"].Width = 45;
             numericSteppers["iGraphDensity"].Width = 45;
@@ -193,8 +189,9 @@ namespace CADacombs.Core
         {
             string termCap = isSurface ? "Edge" : "End";
 
+            Label Gap() => new Label { Width = 8 };
+
             StackLayout Wrap(Control c) => new StackLayout { Orientation = Orientation.Horizontal, Items = { c } };
-            Label Gap() => new Label { Width = 12 };
 
             StackLayout BuildCombo(string key)
             {
@@ -202,59 +199,76 @@ namespace CADacombs.Core
                 return new StackLayout { Orientation = Orientation.Horizontal, Spacing = 0, Items = { textBoxes[key], stepper } };
             }
 
-            var root = new StackLayout { Padding = new Padding(10), Spacing = 8, HorizontalContentAlignment = HorizontalAlignment.Left };
+            var root = new StackLayout { Padding = new Padding(10), Spacing = 8, HorizontalContentAlignment = HorizontalAlignment.Stretch };
 
             root.Items.Add(new Label { Text = "Continuity Constraints", Font = new Font(SystemFont.Bold, 10) });
-            var contGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            contGrid.AddRow(labels["idxCont_Picked"], radioButtonLists["idxCont_Picked"]);
-            contGrid.AddRow(labels["idxCont_Opp"], radioButtonLists["idxCont_Opp"]);
+            var contGrid = new TableLayout { Spacing = new Size(4, 4) };
+            contGrid.Rows.Add(new TableRow(labels["idxCont_Picked"], radioButtonLists["idxCont_Picked"], new TableCell { ScaleWidth = true }));
+            contGrid.Rows.Add(new TableRow(labels["idxCont_Opp"], radioButtonLists["idxCont_Opp"], new TableCell { ScaleWidth = true }));
             root.Items.Add(contGrid);
             root.Items.Add(new Label { Height = 4 });
 
             root.Items.Add(new Label { Text = "Configurations", Font = new Font(SystemFont.Bold, 10) });
-            var adjRow = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, VerticalContentAlignment = VerticalAlignment.Center };
-            adjRow.Items.Add(labels["bLinkedEnds"]);
-            adjRow.Items.Add(radioButtonLists["bLinkedEnds"]);
+            var adjRow = new TableLayout { Spacing = new Size(8, 4) };
+            adjRow.Rows.Add(new TableRow(labels["bLinkedEnds"], radioButtonLists["bLinkedEnds"], new TableCell { ScaleWidth = true }));
             root.Items.Add(adjRow);
             root.Items.Add(new Label { Height = 2 });
 
+            // Changed back to DynamicLayout: The trailing 'null' forces left-justification and natural widths
             var incrGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            var sliderStepsStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, VerticalContentAlignment = VerticalAlignment.Center };
-            sliderStepsStack.Items.Add(labels["iSliderSteps"]);
-            sliderStepsStack.Items.Add(Wrap(dropDowns["iSliderSteps"]));
-            incrGrid.AddRow(labels["fIncrement"], Wrap(textBoxes["fIncrement"]), Gap(), sliderStepsStack, null);
+            incrGrid.AddRow(
+                labels["fIncrement"], Wrap(textBoxes["fIncrement"]), 
+                Gap(), 
+                labels["iSliderSteps"], Wrap(dropDowns["iSliderSteps"]), 
+                null // <--- Absorbs all extra space to the right
+            );
             root.Items.Add(incrGrid);
+
+            Button btnReset = new Button { Text = "Reset All Scale and Slide Values" };
+            btnReset.Click += OnResetValuesClick;
+            root.Items.Add(btnReset);
             root.Items.Add(new Label { Height = 6 });
 
             root.Items.Add(new Label { Text = $"Picked {termCap}", Font = new Font(SystemFont.Bold, 10) });
-            var pickedGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            pickedGrid.AddRow(labels["fScale_Picked"], BuildCombo("fScale_Picked"), Gap(), sliders["fScale_Picked"], null);
-            pickedGrid.AddRow(labels["fSlideG2_Picked"], BuildCombo("fSlideG2_Picked"), Gap(), sliders["fSlideG2_Picked"], null);
-            pickedGrid.AddRow(labels["fSlideG3_Picked"], BuildCombo("fSlideG3_Picked"), Gap(), sliders["fSlideG3_Picked"], null);
+            var pickedGrid = new TableLayout { Spacing = new Size(4, 4) };
+            pickedGrid.Rows.Add(new TableRow(labels["fScale_Picked"], BuildCombo("fScale_Picked"), Gap(), new TableCell(sliders["fScale_Picked"], true)));
+            pickedGrid.Rows.Add(new TableRow(labels["fSlideG2_Picked"], BuildCombo("fSlideG2_Picked"), Gap(), new TableCell(sliders["fSlideG2_Picked"], true)));
+            pickedGrid.Rows.Add(new TableRow(labels["fSlideG3_Picked"], BuildCombo("fSlideG3_Picked"), Gap(), new TableCell(sliders["fSlideG3_Picked"], true)));
             root.Items.Add(pickedGrid);
             root.Items.Add(new Label { Height = 6 });
 
             root.Items.Add(new Label { Text = $"Opposite {termCap}", Font = new Font(SystemFont.Bold, 10) });
-            var oppGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            oppGrid.AddRow(labels["fScale_Opp"], BuildCombo("fScale_Opp"), Gap(), sliders["fScale_Opp"], null);
-            oppGrid.AddRow(labels["fSlideG2_Opp"], BuildCombo("fSlideG2_Opp"), Gap(), sliders["fSlideG2_Opp"], null);
-            oppGrid.AddRow(labels["fSlideG3_Opp"], BuildCombo("fSlideG3_Opp"), Gap(), sliders["fSlideG3_Opp"], null);
+            var oppGrid = new TableLayout { Spacing = new Size(4, 4) };
+            oppGrid.Rows.Add(new TableRow(labels["fScale_Opp"], BuildCombo("fScale_Opp"), Gap(), new TableCell(sliders["fScale_Opp"], true)));
+            oppGrid.Rows.Add(new TableRow(labels["fSlideG2_Opp"], BuildCombo("fSlideG2_Opp"), Gap(), new TableCell(sliders["fSlideG2_Opp"], true)));
+            oppGrid.Rows.Add(new TableRow(labels["fSlideG3_Opp"], BuildCombo("fSlideG3_Opp"), Gap(), new TableCell(sliders["fSlideG3_Opp"], true)));
             root.Items.Add(oppGrid);
             root.Items.Add(new Label { Height = 4 });
 
             root.Items.Add(new Label { Text = "Display", Font = new Font(SystemFont.Bold, 10) });
-            var displayGroup = new StackLayout { Spacing = 4 };
-            var dispChkStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { checkBoxes["bShowGeom"], checkBoxes["bShowPolygon"] } };
+            var displayGroup = new StackLayout { Spacing = 4, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             
+            var dispChkStack = new TableLayout { Spacing = new Size(8, 4) };
+            dispChkStack.Rows.Add(new TableRow(checkBoxes["bShowGeom"], checkBoxes["bShowPolygon"], new TableCell { ScaleWidth = true }));
+            
+            // Changed back to DynamicLayout: Trailing 'null' prevents the right-justified stretching
             var analysisGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            analysisGrid.AddRow(checkBoxes["bShowGraph"], new Label { Width = 4 }, labels["iGraphScale"], Wrap(numericSteppers["iGraphScale"]), new Label { Width = 10 }, labels["iGraphDensity"], Wrap(numericSteppers["iGraphDensity"]), null);
+            analysisGrid.AddRow(
+                checkBoxes["bShowGraph"], 
+                Gap(), 
+                labels["iGraphScale"], Wrap(numericSteppers["iGraphScale"]), 
+                Gap(), 
+                labels["iGraphDensity"], Wrap(numericSteppers["iGraphDensity"]),
+                null // <--- Absorbs all extra space to the right
+            );
             
             displayGroup.Items.Add(dispChkStack);
             displayGroup.Items.Add(analysisGrid);
             root.Items.Add(displayGroup);
             root.Items.Add(new Label { Height = 4 });
 
-            var chkStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 20, Items = { checkBoxes["bDeleteInput"], checkBoxes["bEcho"] } };
+            var chkStack = new TableLayout { Spacing = new Size(20, 4) };
+            chkStack.Rows.Add(new TableRow(checkBoxes["bDeleteInput"], checkBoxes["bEcho"], new TableCell { ScaleWidth = true }));
             root.Items.Add(chkStack);
             root.Items.Add(new Label { Height = 8 });
 
@@ -268,17 +282,50 @@ namespace CADacombs.Core
             DefaultButton = btnOk;
             AbortButton = btnCancel;
 
-            var btnStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { btnOk, btnSave, btnCancel } };
-            root.Items.Add(btnStack);
+            var btnGrid = new DynamicLayout { Spacing = new Size(8, 4) };
+            btnGrid.BeginHorizontal();
+            btnGrid.Add(btnOk, true);
+            btnGrid.Add(btnSave, true);
+            btnGrid.Add(btnCancel, true);
+            btnGrid.EndHorizontal();
+
+            root.Items.Add(btnGrid);
 
             Content = root;
             AutoSize = true;
             Resizable = false;
         }
+        protected void OnResetValuesClick(object sender, EventArgs e)
+        {
+            // Temporarily pause auto-updating so we don't trigger 6 separate preview recalculations
+            _autoUpdating = true;
+            
+            // Reset the underlying scale tracking variables
+            _exactScalePicked = 1.0;
+            _exactScaleOpp = 1.0;
 
-        // ----------------------------------------------------
-        // Interaction Logic & Callbacks
-        // ----------------------------------------------------
+            // Reset the text boxes
+            textBoxes["fScale_Picked"].Text = "1.0000";
+            textBoxes["fSlideG2_Picked"].Text = "0.0000";
+            textBoxes["fSlideG3_Picked"].Text = "0.0000";
+
+            textBoxes["fScale_Opp"].Text = "1.0000";
+            textBoxes["fSlideG2_Opp"].Text = "0.0000";
+            textBoxes["fSlideG3_Opp"].Text = "0.0000";
+
+            // Return all jog sliders to their center zero positions
+            foreach (var key in sliders.Keys)
+            {
+                sliders[key].Value = 0;
+                sliderPrevVals[key] = 0;
+            }
+
+            _autoUpdating = false;
+            
+            // Fire a single unified preview update
+            UpdatePreview();
+        }
+
         protected void UpdateSliderRanges()
         {
             int steps = int.Parse(dropDowns["iSliderSteps"].SelectedValue.ToString());
@@ -348,6 +395,13 @@ namespace CADacombs.Core
         protected void OnContinuityChanged(object sender, EventArgs e)
         {
             if (_autoUpdating) return;
+
+            // Identify exactly which radio list fired the event before updating the preview
+            if (sender == radioButtonLists["idxCont_Picked"])
+                _lastClickedCont = 0;
+            else if (sender == radioButtonLists["idxCont_Opp"])
+                _lastClickedCont = 1;
+
             UpdateControlStates();
             UpdatePreview();
         }
@@ -465,6 +519,18 @@ namespace CADacombs.Core
             catch { return null; }
         }
 
+        protected override void OnLoadComplete(EventArgs e)
+        {
+            base.OnLoadComplete(e);
+            
+            if (EndBulgeOptions.WindowLocation.HasValue && 
+                EndBulgeOptions.WindowLocation.Value.X > 0 && 
+                EndBulgeOptions.WindowLocation.Value.Y > 0)
+            {
+                this.Location = EndBulgeOptions.WindowLocation.Value;
+            }
+        }
+
         protected void SaveSettings()
         {
             EndBulgeOptions.LinkedEnds = radioButtonLists["bLinkedEnds"].SelectedIndex == 1;
@@ -520,6 +586,9 @@ namespace CADacombs.Core
 
         protected virtual void OnFormClosed(object sender, EventArgs e)
         {
+            // Update the global options with the final location before destruction
+            EndBulgeOptions.WindowLocation = this.Location;
+
             // Core cleanup handled in commands
         }
     }

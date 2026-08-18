@@ -12,6 +12,7 @@ namespace CADacombs.Core
         // Global / Application States
         // ----------------------------------------------------
         public static bool Dialog { get; set; } = true;
+        public static Eto.Drawing.Point? WindowLocation { get; set; } = null;
         public static bool LinkedEnds { get; set; } = true;
         public static double Increment { get; set; } = 0.05;
         public static int SliderStepsIndex { get; set; } = 1; // Corresponds to '10' in the UI dropdown
