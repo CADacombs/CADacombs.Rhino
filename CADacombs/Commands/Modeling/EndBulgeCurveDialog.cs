@@ -14,7 +14,6 @@ namespace CADacombs.Commands.Modeling
     {
         private ObjRef _objRef;
         private NurbsCurve _ncIn;
-        private int _lastClickedCont = 0; // 0 for Picked, 1 for Opp
 
         public EndBulgeCurveDialog(ObjRef objRef) : base(isSurface: false)
         {
@@ -46,9 +45,6 @@ namespace CADacombs.Commands.Modeling
                     if (EndBulgeOptions.ContinuityOpp == 4) 
                         radioButtonLists["idxCont_Opp"].SelectedIndex = 3;
                 }
-
-                radioButtonLists["idxCont_Picked"].SelectedIndexChanged += (s, e) => { if (!_autoUpdating) _lastClickedCont = 0; };
-                radioButtonLists["idxCont_Opp"].SelectedIndexChanged += (s, e) => { if (!_autoUpdating) _lastClickedCont = 1; };
 
                 UpdateControlStates();
             }
@@ -94,6 +90,14 @@ namespace CADacombs.Commands.Modeling
                         idxCont_Opp = Math.Max(0, N - idxCont_Picked);
                         radioButtonLists["idxCont_Opp"].SelectedIndex = idxCont_Opp;
                     }
+
+                    // FORCE UNLINK: If the UI had to be downgraded, break the link immediately
+                    if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1)
+                    {
+                        radioButtonLists["bLinkedEnds"].SelectedIndex = 0;
+                        OnLinkedModeChanged(null, null);
+                    }
+
                     _autoUpdating = false;
                 }
             }
@@ -184,6 +188,30 @@ namespace CADacombs.Commands.Modeling
             int idxOpp = radioButtonLists["idxCont_Opp"].SelectedIndex;
 
             int N = _ncIn.Points.Count;
+
+            // NEW: Enforce strict symmetry for continuity constraints in Linked mode
+            if (isLinked)
+            {
+                int target = Math.Max(idxPicked, idxOpp);
+                
+                // If the highest requested continuity exceeds symmetrical point availability, downgrade it
+                if (target * 2 > N)
+                {
+                    target = N / 2;
+                }
+
+                // Force the UI radio buttons to match immediately
+                if (idxPicked != target || idxOpp != target)
+                {
+                    _autoUpdating = true; // Prevent recursive preview updates
+                    radioButtonLists["idxCont_Picked"].SelectedIndex = target;
+                    radioButtonLists["idxCont_Opp"].SelectedIndex = target;
+                    idxPicked = target;
+                    idxOpp = target;
+                    _autoUpdating = false;
+                }
+            }
+
             int allocP, allocO;
 
             if (idxPicked + idxOpp > N)
@@ -213,17 +241,27 @@ namespace CADacombs.Commands.Modeling
             int free = N - allocP - allocO;
             int scaleLimitP, scaleLimitO;
 
-            if (free > 0)
+            if (isLinked)
             {
+                // NEW: In Linked mode, any leftover odd middle point cannot be used symmetrically, so it is ignored.
                 int half = free / 2;
-                int extra = free % 2;
-                scaleLimitP = allocP + half + extra;
+                scaleLimitP = allocP + half;
                 scaleLimitO = allocO + half;
             }
             else
             {
-                scaleLimitP = allocP;
-                scaleLimitO = allocO;
+                if (free > 0)
+                {
+                    int half = free / 2;
+                    int extra = free % 2;
+                    scaleLimitP = allocP + half + extra;
+                    scaleLimitO = allocO + half;
+                }
+                else
+                {
+                    scaleLimitP = allocP;
+                    scaleLimitO = allocO;
+                }
             }
 
             // Enable or disable UI elements dynamically based on available points

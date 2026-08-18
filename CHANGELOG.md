@@ -5,6 +5,26 @@ All notable changes to the `CADacombs.Rhino` plugin project will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-17
+
+### Added
+- `spb_EndBulge`: Added a "Reset All Scale and Slide Values" button to the dialog.
+- `spb_CADacombsAbout`: Added a new administrative command to display plugin version and developer information, including a quick link to the Package Manager.
+
+### Changed
+- `spb_EndBulge`: Refined the dialog layout for better control alignment, justification, and consistent row widths.
+- `spb_EndBulge`: Redesigned "Linked" mode to enforce strict symmetry. It now automatically resolves conflicting continuity constraints by downgrading to the highest valid shared value and properly restricts sliders when available control points cannot be divided equally.
+
+### Fixed
+- `spb_EndBulge`: The dialog now properly remembers its screen location and numeric settings between command executions.
+- `spb_EndBulge`: Fixed an event execution bug that occasionally required users to double-click continuity radio buttons to apply a downgrade.
+- `spb_EndBulge`: Fixed an issue where the tool would fail to automatically switch to "Independent" mode if a constraint limit forced an internal continuity downgrade.
+
+## [0.2.1] - 2026-08-16
+
+### Fixed
+- Package Manager: Resolved a display bug where the version string was bloated by .NET 8 auto-injecting Git commit hashes.
+
 ## [0.2.0] - 2026-08-16
 
 ### Added

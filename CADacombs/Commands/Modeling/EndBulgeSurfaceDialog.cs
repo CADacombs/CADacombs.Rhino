@@ -16,7 +16,6 @@ namespace CADacombs.Commands.Modeling
         private NurbsSurface _nsIn;
         private string _boundary;
         public Brep OriginalGeom { get; private set; }
-        private int _lastClickedCont = 0; // 0 for Picked, 1 for Opp
 
         public EndBulgeSurfaceDialog(ObjRef objRef) : base(isSurface: true)
         {
@@ -77,9 +76,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            radioButtonLists["idxCont_Picked"].SelectedIndexChanged += (s, e) => { if (!_autoUpdating) _lastClickedCont = 0; };
-            radioButtonLists["idxCont_Opp"].SelectedIndexChanged += (s, e) => { if (!_autoUpdating) _lastClickedCont = 1; };
-
             UpdateControlStates();
         }
 
@@ -127,6 +123,14 @@ namespace CADacombs.Commands.Modeling
                         idxCont_Opp = Math.Max(0, N - idxCont_Picked);
                         radioButtonLists["idxCont_Opp"].SelectedIndex = idxCont_Opp;
                     }
+
+                    // FORCE UNLINK: If the UI had to be downgraded, break the link immediately
+                    if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1)
+                    {
+                        radioButtonLists["bLinkedEnds"].SelectedIndex = 0;
+                        OnLinkedModeChanged(null, null);
+                    }
+
                     _autoUpdating = false;
                 }
             }
@@ -248,8 +252,6 @@ namespace CADacombs.Commands.Modeling
         {
             if (_nsIn == null || string.IsNullOrEmpty(_boundary)) return;
             
-            // Re-use the point allocation constraints calculation identical to Curve logic
-            // (Assuming generic N is pulled from the cross-section of the surface)
             NurbsCurve tempCurve;
             if (_boundary == "U0" || _boundary == "U1")
                 tempCurve = EndBulgeSurfaceLogic.ExtractTempCurve(_nsIn, 'U', 0);
@@ -263,6 +265,30 @@ namespace CADacombs.Commands.Modeling
             int idxOpp = radioButtonLists["idxCont_Opp"].SelectedIndex;
 
             int N = tempCurve.Points.Count;
+
+            // NEW: Enforce strict symmetry for continuity constraints in Linked mode
+            if (isLinked)
+            {
+                int target = Math.Max(idxPicked, idxOpp);
+                
+                // If the highest requested continuity exceeds symmetrical point availability, downgrade it
+                if (target * 2 > N)
+                {
+                    target = N / 2;
+                }
+
+                // Force the UI radio buttons to match immediately
+                if (idxPicked != target || idxOpp != target)
+                {
+                    _autoUpdating = true; // Prevent recursive preview updates
+                    radioButtonLists["idxCont_Picked"].SelectedIndex = target;
+                    radioButtonLists["idxCont_Opp"].SelectedIndex = target;
+                    idxPicked = target;
+                    idxOpp = target;
+                    _autoUpdating = false;
+                }
+            }
+
             int allocP, allocO;
 
             if (idxPicked + idxOpp > N)
@@ -292,20 +318,30 @@ namespace CADacombs.Commands.Modeling
             int free = N - allocP - allocO;
             int scaleLimitP, scaleLimitO;
 
-            if (free > 0)
+            if (isLinked)
             {
+                // NEW: In Linked mode, any leftover odd middle point cannot be used symmetrically, so it is ignored.
                 int half = free / 2;
-                int extra = free % 2;
-                scaleLimitP = allocP + half + extra;
+                scaleLimitP = allocP + half;
                 scaleLimitO = allocO + half;
             }
             else
             {
-                scaleLimitP = allocP;
-                scaleLimitO = allocO;
+                if (free > 0)
+                {
+                    int half = free / 2;
+                    int extra = free % 2;
+                    scaleLimitP = allocP + half + extra;
+                    scaleLimitO = allocO + half;
+                }
+                else
+                {
+                    scaleLimitP = allocP;
+                    scaleLimitO = allocO;
+                }
             }
 
-            // Enable or disable UI elements
+            // Enable or disable UI elements dynamically based on available points
             textBoxes["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
             btnUp["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
             btnDown["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
