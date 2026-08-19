@@ -49,22 +49,5 @@ namespace CADacombs.Core
         public static double ScaleOpp { get; set; } = 1.0;
         public static double SlideG2Opp { get; set; } = 0.0;
         public static double SlideG3Opp { get; set; } = 0.0;
-
-        // ----------------------------------------------------
-        // Helper Methods
-        // ----------------------------------------------------
-        
-        /// <summary>
-        /// Instantly syncs the Opposite end configurations to match the Picked end.
-        /// </summary>
-        public static void SyncLinkedControls()
-        {
-            if (LinkedEnds)
-            {
-                ScaleOpp = ScalePicked;
-                SlideG2Opp = SlideG2Picked;
-                SlideG3Opp = SlideG3Picked;
-            }
-        }
     }
 }

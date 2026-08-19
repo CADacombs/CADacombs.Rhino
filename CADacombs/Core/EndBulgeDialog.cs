@@ -81,6 +81,8 @@ namespace CADacombs.Core
         protected virtual void CreateControls()
         {
             string termLow = isSurface ? "edge" : "end";
+
+            // For arrows
             Font smallFont = new Font(SystemFont.Default, 4);
 
             string[] contList = { "None", "G0", "G1", "G2", "G3" };
@@ -119,11 +121,30 @@ namespace CADacombs.Core
                 labels[sKey] = new Label { Text = labelText };
                 textBoxes[sKey] = new TextBox { Text = initVal.ToString("F4") };
                 
+                // --- NEW: UX Tooltips ---
+                string tip = isScale ? "Scales the distance between the boundary and the adjacent interior control point." : 
+                                       "Translates the corresponding deeper control point parallel to the tangent vector.";
+                labels[sKey].ToolTip = tip;
+                textBoxes[sKey].ToolTip = tip;
+
+                // --- NEW: Mouse Wheel Support ---
+                textBoxes[sKey].MouseWheel += (s, e) => 
+                {
+                    if (!textBoxes[sKey].Enabled) return;
+                    
+                    // e.Delta.Height contains the scroll direction
+                    int direction = e.Delta.Height > 0 ? 1 : (e.Delta.Height < 0 ? -1 : 0);
+                    if (direction != 0)
+                    {
+                        AdjustStepper(direction, sKey);
+                        e.Handled = true; // Prevents the scroll event from bubbling up to the window
+                    }
+                };
+                
                 if (isScale) textBoxes[sKey].TextChanged += OnScaleTextChanged;
                 else textBoxes[sKey].TextChanged += OnSlideTextChanged;
 
                 sliderPrevVals[sKey] = 0;
-                // REMOVED 'Width = 132' so the sliders can scale freely to match the top row
                 sliders[sKey] = new Slider { SnapToTick = true, TickFrequency = 1 };
                 sliders[sKey].ValueChanged += (s, e) => OnJogSliderChanged(sKey);
                 sliders[sKey].MouseUp += (s, e) => ZeroSlider(sKey);
@@ -201,34 +222,40 @@ namespace CADacombs.Core
 
             var root = new StackLayout { Padding = new Padding(10), Spacing = 8, HorizontalContentAlignment = HorizontalAlignment.Stretch };
 
+            // 1. MASTER MODE SWITCH (Moved to the very top!)
+            var modeGrid = new TableLayout { Spacing = new Size(8, 4) };
+            modeGrid.Rows.Add(new TableRow(labels["bLinkedEnds"], radioButtonLists["bLinkedEnds"], new TableCell { ScaleWidth = true }));
+            root.Items.Add(modeGrid);
+            root.Items.Add(new Label { Height = 2 });
+
+            // 2. MATHEMATICAL CONSTRAINTS
             root.Items.Add(new Label { Text = "Continuity Constraints", Font = new Font(SystemFont.Bold, 10) });
             var contGrid = new TableLayout { Spacing = new Size(4, 4) };
             contGrid.Rows.Add(new TableRow(labels["idxCont_Picked"], radioButtonLists["idxCont_Picked"], new TableCell { ScaleWidth = true }));
             contGrid.Rows.Add(new TableRow(labels["idxCont_Opp"], radioButtonLists["idxCont_Opp"], new TableCell { ScaleWidth = true }));
             root.Items.Add(contGrid);
-            root.Items.Add(new Label { Height = 4 });
+            
+            // Visual Divider
+            root.Items.Add(new Label { Height = 0 });
+            root.Items.Add(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
+            root.Items.Add(new Label { Height = 0 });
 
-            root.Items.Add(new Label { Text = "Configurations", Font = new Font(SystemFont.Bold, 10) });
-            var adjRow = new TableLayout { Spacing = new Size(8, 4) };
-            adjRow.Rows.Add(new TableRow(labels["bLinkedEnds"], radioButtonLists["bLinkedEnds"], new TableCell { ScaleWidth = true }));
-            root.Items.Add(adjRow);
-            root.Items.Add(new Label { Height = 2 });
-
-            // Changed back to DynamicLayout: The trailing 'null' forces left-justification and natural widths
+            // 3. SLIDER SETTINGS & RESET
             var incrGrid = new DynamicLayout { Spacing = new Size(4, 4) };
             incrGrid.AddRow(
                 labels["fIncrement"], Wrap(textBoxes["fIncrement"]), 
                 Gap(), 
                 labels["iSliderSteps"], Wrap(dropDowns["iSliderSteps"]), 
-                null // <--- Absorbs all extra space to the right
+                null 
             );
             root.Items.Add(incrGrid);
 
             Button btnReset = new Button { Text = "Reset All Scale and Slide Values" };
             btnReset.Click += OnResetValuesClick;
             root.Items.Add(btnReset);
-            root.Items.Add(new Label { Height = 6 });
+            root.Items.Add(new Label { Height = 4 });
 
+            // 4. THE SLIDERS
             root.Items.Add(new Label { Text = $"Picked {termCap}", Font = new Font(SystemFont.Bold, 10) });
             var pickedGrid = new TableLayout { Spacing = new Size(4, 4) };
             pickedGrid.Rows.Add(new TableRow(labels["fScale_Picked"], BuildCombo("fScale_Picked"), Gap(), new TableCell(sliders["fScale_Picked"], true)));
@@ -243,8 +270,13 @@ namespace CADacombs.Core
             oppGrid.Rows.Add(new TableRow(labels["fSlideG2_Opp"], BuildCombo("fSlideG2_Opp"), Gap(), new TableCell(sliders["fSlideG2_Opp"], true)));
             oppGrid.Rows.Add(new TableRow(labels["fSlideG3_Opp"], BuildCombo("fSlideG3_Opp"), Gap(), new TableCell(sliders["fSlideG3_Opp"], true)));
             root.Items.Add(oppGrid);
-            root.Items.Add(new Label { Height = 4 });
+            
+            // Visual Divider
+            root.Items.Add(new Label { Height = 0 });
+            root.Items.Add(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
+            root.Items.Add(new Label { Height = 0 });
 
+            // 5. DISPLAY
             root.Items.Add(new Label { Text = "Display", Font = new Font(SystemFont.Bold, 10) });
             var displayGroup = new StackLayout { Spacing = 4, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             
@@ -259,7 +291,7 @@ namespace CADacombs.Core
                 labels["iGraphScale"], Wrap(numericSteppers["iGraphScale"]), 
                 Gap(), 
                 labels["iGraphDensity"], Wrap(numericSteppers["iGraphDensity"]),
-                null // <--- Absorbs all extra space to the right
+                null
             );
             
             displayGroup.Items.Add(dispChkStack);
@@ -367,7 +399,7 @@ namespace CADacombs.Core
             }
 
             _autoUpdating = false;
-            SyncLinkedControls();
+            SyncLinkedControls(targetKey);
             UpdatePreview();
         }
 
@@ -379,16 +411,39 @@ namespace CADacombs.Core
             _autoUpdatingSlider = false;
         }
 
-        protected void SyncLinkedControls()
+        protected void SyncLinkedControls(string sourceKey = "Picked")
         {
             if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1)
             {
-                if (textBoxes["fScale_Opp"].Text != textBoxes["fScale_Picked"].Text)
-                    textBoxes["fScale_Opp"].Text = textBoxes["fScale_Picked"].Text;
-                if (textBoxes["fSlideG2_Opp"].Text != textBoxes["fSlideG2_Picked"].Text)
-                    textBoxes["fSlideG2_Opp"].Text = textBoxes["fSlideG2_Picked"].Text;
-                if (textBoxes["fSlideG3_Opp"].Text != textBoxes["fSlideG3_Picked"].Text)
-                    textBoxes["fSlideG3_Opp"].Text = textBoxes["fSlideG3_Picked"].Text;
+                // Determine the direction of the sync based on which control fired the event
+                bool fromOpp = sourceKey != null && sourceKey.Contains("Opp");
+
+                string srcScale = fromOpp ? "fScale_Opp" : "fScale_Picked";
+                string dstScale = fromOpp ? "fScale_Picked" : "fScale_Opp";
+
+                string srcG2 = fromOpp ? "fSlideG2_Opp" : "fSlideG2_Picked";
+                string dstG2 = fromOpp ? "fSlideG2_Picked" : "fSlideG2_Opp";
+
+                string srcG3 = fromOpp ? "fSlideG3_Opp" : "fSlideG3_Picked";
+                string dstG3 = fromOpp ? "fSlideG3_Picked" : "fSlideG3_Opp";
+
+                bool prevAuto = _autoUpdating;
+                _autoUpdating = true; // Suspend events to prevent recursive UI loops
+
+                if (textBoxes[dstScale].Text != textBoxes[srcScale].Text)
+                    textBoxes[dstScale].Text = textBoxes[srcScale].Text;
+                
+                if (textBoxes[dstG2].Text != textBoxes[srcG2].Text)
+                    textBoxes[dstG2].Text = textBoxes[srcG2].Text;
+                    
+                if (textBoxes[dstG3].Text != textBoxes[srcG3].Text)
+                    textBoxes[dstG3].Text = textBoxes[srcG3].Text;
+
+                // Safely sync the underlying precision trackers
+                if (fromOpp) _exactScalePicked = _exactScaleOpp;
+                else _exactScaleOpp = _exactScalePicked;
+
+                _autoUpdating = prevAuto;
             }
         }
 
@@ -396,7 +451,6 @@ namespace CADacombs.Core
         {
             if (_autoUpdating) return;
 
-            // Identify exactly which radio list fired the event before updating the preview
             if (sender == radioButtonLists["idxCont_Picked"])
                 _lastClickedCont = 0;
             else if (sender == radioButtonLists["idxCont_Opp"])
@@ -409,7 +463,8 @@ namespace CADacombs.Core
         protected void OnLinkedModeChanged(object sender, EventArgs e)
         {
             UpdateControlStates();
-            if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1) SyncLinkedControls();
+            if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1) 
+                SyncLinkedControls("Picked"); // Default flow when turning link on
             UpdatePreview();
         }
 
@@ -428,7 +483,8 @@ namespace CADacombs.Core
             
             if (!_autoUpdating)
             {
-                SyncLinkedControls();
+                string source = (txtBox == textBoxes["fScale_Opp"]) ? "Opp" : "Picked";
+                SyncLinkedControls(source);
                 UpdatePreview();
             }
         }
@@ -441,7 +497,8 @@ namespace CADacombs.Core
             
             if (!_autoUpdating)
             {
-                SyncLinkedControls();
+                string source = (txtBox == textBoxes["fSlideG2_Opp"] || txtBox == textBoxes["fSlideG3_Opp"]) ? "Opp" : "Picked";
+                SyncLinkedControls(source);
                 UpdatePreview();
             }
         }
@@ -500,7 +557,7 @@ namespace CADacombs.Core
             textBoxes[key].Text = newVal.ToString("F4");
             _autoUpdating = false;
 
-            SyncLinkedControls();
+            SyncLinkedControls(key);
             UpdatePreview();
         }
 

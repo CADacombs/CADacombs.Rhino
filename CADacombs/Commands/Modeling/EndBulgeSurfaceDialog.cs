@@ -130,6 +130,11 @@ namespace CADacombs.Commands.Modeling
                         radioButtonLists["bLinkedEnds"].SelectedIndex = 0;
                         OnLinkedModeChanged(null, null);
                     }
+                    else
+                    {
+                        // NEW: In Independent mode, manually refresh the sliders to match the newly downgraded radio button
+                        UpdateControlStates();
+                    }
 
                     _autoUpdating = false;
                 }
@@ -269,9 +274,10 @@ namespace CADacombs.Commands.Modeling
             // NEW: Enforce strict symmetry for continuity constraints in Linked mode
             if (isLinked)
             {
-                int target = Math.Max(idxPicked, idxOpp);
+                // Sync to the side that was just clicked. (If Linked was just toggled, default to syncing to Picked)
+                int target = (_lastClickedCont == 1) ? idxOpp : idxPicked;
                 
-                // If the highest requested continuity exceeds symmetrical point availability, downgrade it
+                // If the requested continuity exceeds symmetrical point availability, downgrade it
                 if (target * 2 > N)
                 {
                     target = N / 2;
@@ -341,46 +347,45 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            // Enable or disable UI elements dynamically based on available points
-            textBoxes["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
-            btnUp["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
-            btnDown["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
-            sliders["fSlideG2_Picked"].Enabled = scaleLimitP >= 3;
+            // Determine if the active continuity tier permits the controls (2 = G1, 3 = G2, 4 = G3)
+            bool allowScaleP = idxPicked >= 2;
+            bool allowScaleO = idxOpp >= 2;
 
-            textBoxes["fSlideG3_Picked"].Enabled = scaleLimitP >= 4;
-            btnUp["fSlideG3_Picked"].Enabled = scaleLimitP >= 4;
-            btnDown["fSlideG3_Picked"].Enabled = scaleLimitP >= 4;
-            sliders["fSlideG3_Picked"].Enabled = scaleLimitP >= 4;
+            bool allowG2P = (scaleLimitP >= 3) && (idxPicked >= 3);
+            bool allowG3P = (scaleLimitP >= 4) && (idxPicked >= 4);
+            bool allowG2O = (scaleLimitO >= 3) && (idxOpp >= 3);
+            bool allowG3O = (scaleLimitO >= 4) && (idxOpp >= 4);
 
-            textBoxes["fScale_Opp"].Enabled = !isLinked;
-            btnUp["fScale_Opp"].Enabled = !isLinked;
-            btnDown["fScale_Opp"].Enabled = !isLinked;
-            sliders["fScale_Opp"].Enabled = !isLinked;
-
-            if (isLinked)
+            // Local helper to cleanly toggle UI state and safely reset values when disabled
+            void ApplyControlState(string key, bool enableUI, bool forceReset, string resetText)
             {
-                textBoxes["fSlideG2_Opp"].Enabled = false;
-                btnUp["fSlideG2_Opp"].Enabled = false;
-                btnDown["fSlideG2_Opp"].Enabled = false;
-                sliders["fSlideG2_Opp"].Enabled = false;
+                if (labels.ContainsKey(key)) labels[key].Enabled = enableUI; // NEW: Grays out the text label
 
-                textBoxes["fSlideG3_Opp"].Enabled = false;
-                btnUp["fSlideG3_Opp"].Enabled = false;
-                btnDown["fSlideG3_Opp"].Enabled = false;
-                sliders["fSlideG3_Opp"].Enabled = false;
-            }
-            else
-            {
-                textBoxes["fSlideG2_Opp"].Enabled = scaleLimitO >= 3;
-                btnUp["fSlideG2_Opp"].Enabled = scaleLimitO >= 3;
-                btnDown["fSlideG2_Opp"].Enabled = scaleLimitO >= 3;
-                sliders["fSlideG2_Opp"].Enabled = scaleLimitO >= 3;
+                textBoxes[key].Enabled = enableUI;
+                btnUp[key].Enabled = enableUI;
+                btnDown[key].Enabled = enableUI;
+                sliders[key].Enabled = enableUI;
 
-                textBoxes["fSlideG3_Opp"].Enabled = scaleLimitO >= 4;
-                btnUp["fSlideG3_Opp"].Enabled = scaleLimitO >= 4;
-                btnDown["fSlideG3_Opp"].Enabled = scaleLimitO >= 4;
-                sliders["fSlideG3_Opp"].Enabled = scaleLimitO >= 4;
+                if (forceReset && textBoxes[key].Text != resetText)
+                {
+                    bool prevAuto = _autoUpdating;
+                    _autoUpdating = true; // Suspend events to prevent double-firing UpdatePreview
+                    textBoxes[key].Text = resetText;
+                    sliders[key].Value = 0; // 0 is the center/default physical position for all your sliders
+                    sliderPrevVals[key] = 0;
+                    _autoUpdating = prevAuto;
+                }
             }
+
+            // Update Picked side
+            ApplyControlState("fScale_Picked", allowScaleP, !allowScaleP, "1.0000");
+            ApplyControlState("fSlideG2_Picked", allowG2P, !allowG2P, "0.0000");
+            ApplyControlState("fSlideG3_Picked", allowG3P, !allowG3P, "0.0000");
+            
+            // Update Opposite side (Now perfectly mirrors Picked side logic so either side can drive in Linked mode)
+            ApplyControlState("fScale_Opp", allowScaleO, !allowScaleO, "1.0000");
+            ApplyControlState("fSlideG2_Opp", allowG2O, !allowG2O, "0.0000");
+            ApplyControlState("fSlideG3_Opp", allowG3O, !allowG3O, "0.0000");
         }
     }
 }

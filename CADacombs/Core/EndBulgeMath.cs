@@ -89,26 +89,11 @@ namespace CADacombs.Core
             int max_mod_T0 = alloc_0 - 1;
             int max_mod_T1 = alloc_1 - 1;
 
-            int free = N - alloc_0 - alloc_1;
-            int scale_limit_T0, scale_limit_T1;
-
-            if (free > 0)
-            {
-                int half = free / 2;
-                int extra = free % 2;
-                scale_limit_T0 = alloc_0 + half;
-                scale_limit_T1 = alloc_1 + half;
-                if (extra != 0)
-                {
-                    if (iPickedEnd == 0) scale_limit_T0 += 1;
-                    else scale_limit_T1 += 1;
-                }
-            }
-            else
-            {
-                scale_limit_T0 = alloc_0;
-                scale_limit_T1 = alloc_1;
-            }
+            // STRICT NATIVE CONTINUITY LOCKING:
+            // We no longer distribute "free" interior points to smooth the curve. 
+            // Translation is strictly clamped to the points governed by the active continuity tier.
+            int scale_limit_T0 = max_mod_T0 + 1;
+            int scale_limit_T1 = max_mod_T1 + 1;
 
             if (bDebug && bOverlap)
             {
