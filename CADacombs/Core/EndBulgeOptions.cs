@@ -13,7 +13,7 @@ namespace CADacombs.Core
         // ----------------------------------------------------
         public static bool Dialog { get; set; } = true;
         public static Eto.Drawing.Point? WindowLocation { get; set; } = null;
-        public static bool LinkedEnds { get; set; } = true;
+        public static bool LinkedEnds { get; set; } = false;
         public static double Increment { get; set; } = 0.05;
         public static int SliderStepsIndex { get; set; } = 1; // Corresponds to '10' in the UI dropdown
 
@@ -35,9 +35,8 @@ namespace CADacombs.Core
         // ----------------------------------------------------
         /// <summary>
         /// Continuity mapping: 0 = None, 1 = G0, 2 = G1, 3 = G2, 4 = G3
-        /// Storing 3 defaults to G2, but matches your Python default index behavior.
         /// </summary>
-        public static int ContinuityPicked { get; set; } = 3;
+        public static int ContinuityPicked { get; set; } = 4;
         public static double ScalePicked { get; set; } = 1.0;
         public static double SlideG2Picked { get; set; } = 0.0;
         public static double SlideG3Picked { get; set; } = 0.0;
@@ -45,7 +44,7 @@ namespace CADacombs.Core
         // ----------------------------------------------------
         // Opposite End / Edge States
         // ----------------------------------------------------
-        public static int ContinuityOpp { get; set; } = 3;
+        public static int ContinuityOpp { get; set; } = 4;
         public static double ScaleOpp { get; set; } = 1.0;
         public static double SlideG2Opp { get; set; } = 0.0;
         public static double SlideG3Opp { get; set; } = 0.0;

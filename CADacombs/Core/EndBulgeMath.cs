@@ -34,7 +34,7 @@ namespace CADacombs.Core
                 NurbsCurve nc_In,
                 double fScale_T0 = 1.0, double fSlideG2_T0 = 0.0, double fSlideG3_T0 = 0.0,
                 double fScale_T1 = 1.0, double fSlideG2_T1 = 0.0, double fSlideG3_T1 = 0.0,
-                int iG_T0 = 2, int iG_T1 = 2, int iPickedEnd = 0, bool bDebug = false)
+                int iG_T0 = 3, int iG_T1 = 3, int iPickedEnd = 0, bool bDebug = false)
         {
             if (iG_T0 < 0 && iG_T1 < 0) return (null, "Both continuity inputs are None.", null);
             if (nc_In.IsPeriodic) return (null, "Input curve is periodic.", null);

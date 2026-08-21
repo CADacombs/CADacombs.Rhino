@@ -5,6 +5,19 @@ All notable changes to the `CADacombs.Rhino` plugin project will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-08-20
+
+### Added
+- **About Dialog:** Added `Ctrl+C` keyboard shortcut support to quickly copy version, license, and support information to the clipboard.
+
+### Changed
+- **Class-A Defaults:** The default continuity constraint for both the picked and opposite ends has been upgraded from G2 to G3 to better support high-end surfacing workflows out of the box.
+- **Safer UX:** The default `Linked Ends` state is now set to `Independent` to provide a more predictable and Rhino-idiomatic baseline when selecting asymmetrical geometry.
+- **About Dialog:** Redesigned the layout for a more compact UI and added dedicated, clickable links for bug reports and direct forum PMs.
+
+### Fixed
+- **UI Sliders:** Resolved an issue where the G2 and G3 jog sliders could become permanently stuck if manipulated via keyboard arrow keys or if the mouse button was released outside the bounds of the dialog.
+
 ## [0.2.2] - 2026-08-18
 
 ### Added

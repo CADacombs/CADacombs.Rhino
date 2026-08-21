@@ -148,6 +148,12 @@ namespace CADacombs.Core
                 sliders[sKey] = new Slider { SnapToTick = true, TickFrequency = 1 };
                 sliders[sKey].ValueChanged += (s, e) => OnJogSliderChanged(sKey);
                 sliders[sKey].MouseUp += (s, e) => ZeroSlider(sKey);
+                
+                // Catch keyboard releases (arrow keys)
+                sliders[sKey].KeyUp += (s, e) => ZeroSlider(sKey);
+                
+                // Catch when the control drops mouse capture or the user clicks away
+                sliders[sKey].LostFocus += (s, e) => ZeroSlider(sKey);
 
                 btnUp[sKey] = new Button { Text = "▲", Width = 16, Height = 12, Font = smallFont, MinimumSize = new Size(16, 12) };
                 btnDown[sKey] = new Button { Text = "▼", Width = 16, Height = 12, Font = smallFont, MinimumSize = new Size(16, 12) };
