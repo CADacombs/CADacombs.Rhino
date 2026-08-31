@@ -99,10 +99,15 @@ namespace CADacombs.Commands
                 Close();
             };
 
-            var btnOk = new Button { Text = "OK", Width = 80 };
-            btnOk.Click += (s, e) => Close();
+            var btnClose = new Button { Text = "Close", Width = 80 };
+            btnClose.Click += (s, e) => Close();
             
-            DefaultButton = btnOk;
+            // Map the Enter and Esc keys directly to the Close button
+            DefaultButton = btnClose;
+            AbortButton = btnClose;
+            
+            // Ensure the Close button grabs the initial keyboard focus when the dialog opens
+            this.Shown += (s, e) => btnClose.Focus();
 
             // Support Group (Spacing = 0 removes gaps between lines)
             var supportGroup = new StackLayout
@@ -153,7 +158,7 @@ namespace CADacombs.Commands
                     githubLink,
                     packageManagerLink,
                     new Label { Height = 16 }, 
-                    btnOk
+                    btnClose
                 }
             };
 

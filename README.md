@@ -29,7 +29,30 @@ A growing collection of NURBS curve and surface modeling tools for Rhinoceros 3D
 * Core function restricts and modifies $p_1$ and $p_2$ locations predictably.
 * Viewport analysis modes (e.g., Zebra, Draft Angle, Shaded Views) remain active and dynamically update during slider adjustments.
 
-### 2. spb_CADacombsAbout
+### 2. spb_MatchSrf
+`spb_MatchSrf` is a precise complement to Rhino's native `_MatchSrf`, designed to strictly preserve input knot and control point structures when matching untrimmed surface edges.
+
+**Key Features:**
+* **Structural Fidelity:** Produces surfaces that follow the input knot and point structures as closely as mathematically possible, rather than refitting the entire surface.
+* **Continuity Priority:** Strictly targets continuity in order of G0, then G1, then G2, increasing degree or adding spans only when mathematically necessary.
+* **Pick-Point Alignment:** Matches parameterization directions based on exactly where you click the edges, rather than attempting automatic alignments.
+* **Smart Upgrading:** Automatically transfers unique knots and safely handles matching to reference surfaces of lesser or greater degrees.
+* **Non-Destructive Options:** Includes toggles to replace the original surface or add a new one, maintain degree (by adding spans instead), and an echo mode for detailed command-line reporting.
+
+### 3. spb_EdgeSrf
+`spb_EdgeSrf` is a high-precision alternative to Rhino's native `_EdgeSrf`, capable of establishing face-face continuity (G1 and G2) directly during surface generation, similar to running a restricted `_MatchSrf` immediately after surface creation.
+
+**Key Features:**
+* **Flexible Input:** Creates a surface from 2, 3, or 4 open curves.
+* **Smart Topology Handling:** 
+  * If 3 curves are provided, it automatically calculates the missing 4th curve to close the loop.
+  * If 2 curves are provided, it calculates missing bridges, acting like `_ExtrudeCrvAlongCrv` (for adjacent curves via `SumSurface`) or `_BlendEdge` (for opposite curves).
+  * Automatically detects overlapping curve intersections and trims them to the exact inner boundaries.
+* **Independent Continuity:** Target continuities (G0, G1, G2) can be applied globally to all boundaries or assigned individually per curve.
+* **Corner Averaging:** Intelligently averages intersecting G1/G2 adjustments at corners so boundaries flow together seamlessly.
+* **NURBS Precision:** The output surface may contain more knot vectors than native `_EdgeSrf` to ensure absolute mathematical compliance with the requested continuity.
+
+### 4. spb_CADacombsAbout
 Displays the current plugin version, author credits, and license information.
 
 ---

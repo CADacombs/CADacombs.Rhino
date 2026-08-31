@@ -1,12 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetExt>.rhp</TargetExt>
-    <TargetFramework>net48</TargetFramework>
-    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <TargetFrameworks>net48;net8.0</TargetFrameworks>
     <AssemblyName>CADacombs</AssemblyName>
 	
     <Title>CADacombs for Rhino</Title>
-    <Version>0.2.3</Version>
+    <Version>0.2.4</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>A growing collection of tools.</Description>
     <Company>Steven P. Burzinski</Company>

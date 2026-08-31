@@ -5,6 +5,17 @@ All notable changes to the `CADacombs.Rhino` plugin project will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-08-30
+
+### Added
+- `spb_MatchSrf`: Migrated the legacy Python script into the native C# CADacombs plugin architecture.
+- `spb_EdgeSrf`: Migrated the legacy Python script into C#. It now supports 2, 3, and 4-curve surface generation with mathematically precise NURBS extraction (SumSurfaces and Blends) before applying Coons patch logic.
+- **Core Math:** Added `NurbsMatchMath` to handle explicit NURBS geometry manipulation (knot transfer, degree matching, algebraic vector scaling) for true Class A G0, G1, and G2 surface matching without control point refitting.
+- **Core Math:** Expanded topological solvers within `NurbsMatchMath` to include automatic curve intersection trimming, closed-loop detection, and a `CornerAdjustment` struct for precise G1/G2 corner averaging.
+
+### Removed
+- `spb_MatchSrf`: Removed the `UseUnderlyingIsoCrvs` option from the command line prompt to streamline the interface. The tool now automatically and safely extracts underlying `IsoCurves` rather than visual `BrepEdges` to prevent surface generation failures with complex PolyCurves.
+
 ## [0.2.3] - 2026-08-20
 
 ### Added

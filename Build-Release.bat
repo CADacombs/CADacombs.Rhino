@@ -3,7 +3,10 @@ echo =======================================
 echo Building CADacombs.Rhino (RELEASE)
 echo =======================================
 
-:: 1. Compile the Release build
+:: 1. Clean the previous builds to ensure no stale files
+dotnet clean CADacombs\CADacombs.csproj --configuration Release
+
+:: 2. Compile the Release build
 dotnet build CADacombs\CADacombs.csproj --configuration Release
 
 :: Check if the build failed and abort if it did
@@ -16,17 +19,32 @@ if %ERRORLEVEL% neq 0 (
     exit /b %ERRORLEVEL%
 )
 
-:: 2. Navigate to the output folder where all the files were copied
+:: 3. Navigate to the output folder where the framework subfolders were created
 cd CADacombs\bin\Release
 
-:: 3. Command Yak to build the package
+:: 4. Copy shared assets to the root of the Release folder so Yak packages them correctly
+copy net48\manifest.yml .
+copy net48\CADacombs.rui .
+copy net48\icon.png .
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo =======================================
+    echo ASSET COPY FAILED! Aborting Yak Packaging.
+    echo =======================================
+    cd ..\..\..
+    pause
+    exit /b %ERRORLEVEL%
+)
+
+:: 5. Command Yak to build the package
 echo.
 echo =======================================
 echo Creating Yak Package...
 echo =======================================
 "C:\Program Files\Rhino 8\System\Yak.exe" build
 
-:: 4. Return to the root folder
+:: Return to the root folder
 cd ..\..\..
 
 echo.
