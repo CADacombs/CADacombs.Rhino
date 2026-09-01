@@ -5,7 +5,11 @@ All notable changes to the `CADacombs.Rhino` plugin project will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.4] - 2026-08-30
+## [0.2.5-alpha] - 2026-09-01
+
+### Added
+- `spb_Drape`: Migrated the legacy Python script into the native C# CADacombs plugin architecture. It features a High-to-Low iterative NURBS fitting algorithm, dynamic Z-axis raycasting over Breps and Meshes, and complex neighbor-extrapolation logic to gracefully resolve raycast misses.
+- UI/UX: Added a custom, dark-mode compatible SVG toolbar icon for `spb_Drape` depicting the mechanical projection of a surface over a stepped target.## [0.2.4] - 2026-08-30
 
 ### Added
 - `spb_MatchSrf`: Migrated the legacy Python script into the native C# CADacombs plugin architecture.
