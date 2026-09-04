@@ -2,6 +2,17 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Launch Rhino 8 (Debug)",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "preLaunchTask": "build-debug"
+        },
+        {
             "name": "Attach to Rhino",
             "type": "coreclr",
             "request": "attach",

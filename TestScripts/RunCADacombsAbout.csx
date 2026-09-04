@@ -1,7 +1,7 @@
 #r "Eto"
 #pragma warning disable 1701
 
-#load "CADacombs/Commands/CADacombsAboutCommand.cs"
+#load "../CADacombs/Commands/CADacombsAboutCommand.cs"
 
 using System;
 using System.Reflection;

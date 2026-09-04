@@ -4,20 +4,20 @@
 // ----------------------------------------------------
 // Load Core Logic
 // ----------------------------------------------------
-#load "CADacombs/Core/EndBulgeMath.cs"
-#load "CADacombs/Core/EndBulgeOptions.cs"
-#load "CADacombs/Core/EndBulgeConduit.cs"
-#load "CADacombs/Core/EndBulgeDialog.cs"
+#load "../CADacombs/Core/EndBulgeMath.cs"
+#load "../CADacombs/Core/EndBulgeOptions.cs"
+#load "../CADacombs/Core/EndBulgeConduit.cs"
+#load "../CADacombs/Core/EndBulgeDialog.cs"
 
 // ----------------------------------------------------
 // Load Command & UI Logic
 // ----------------------------------------------------
-#load "CADacombs/Commands/Modeling/EndBulgeCurveDialog.cs"
-#load "CADacombs/Commands/Modeling/EndBulgeCurveLogic.cs"
-#load "CADacombs/Commands/Modeling/EndBulgeSurfaceConduit.cs"
-#load "CADacombs/Commands/Modeling/EndBulgeSurfaceDialog.cs"
-#load "CADacombs/Commands/Modeling/EndBulgeSurfaceLogic.cs"
-#load "CADacombs/Commands/Modeling/EndBulgeCommand.cs"
+#load "../CADacombs/Commands/Modeling/EndBulgeCurveDialog.cs"
+#load "../CADacombs/Commands/Modeling/EndBulgeCurveLogic.cs"
+#load "../CADacombs/Commands/Modeling/EndBulgeSurfaceConduit.cs"
+#load "../CADacombs/Commands/Modeling/EndBulgeSurfaceDialog.cs"
+#load "../CADacombs/Commands/Modeling/EndBulgeSurfaceLogic.cs"
+#load "../CADacombs/Commands/Modeling/EndBulgeCommand.cs"
 
 using System;
 using System.Reflection;

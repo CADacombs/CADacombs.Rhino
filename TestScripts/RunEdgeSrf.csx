@@ -2,12 +2,12 @@
 #pragma warning disable 1701
 
 // Load the Core math and memory states first
-#load "CADacombs/Core/EdgeSrfOptions.cs"
-#load "CADacombs/Core/NurbsMatchMath.cs"
+#load "../CADacombs/Core/EdgeSrfOptions.cs"
+#load "../CADacombs/Core/NurbsMatchMath.cs"
 
 // Then load the Command file that depends on them
-#load "CADacombs/Commands/Modeling/EdgeSrfLogic.cs"
-#load "CADacombs/Commands/Modeling/EdgeSrfCommand.cs"
+#load "../CADacombs/Commands/Modeling/EdgeSrfLogic.cs"
+#load "../CADacombs/Commands/Modeling/EdgeSrfCommand.cs"
 
 using System;
 using System.Reflection;
