@@ -36,7 +36,6 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (c != null) inputCurves.Add(c);
             }
 
-            // FIX: Unselect objects so the yellow selection overlay doesn't hide conduit colors
             doc.Objects.UnselectAll();
             doc.Views.Redraw();
 
@@ -44,33 +43,38 @@ namespace CADacombs.Commands.Modeling.Curves
             conduit.Enabled = true;
 
             var dialog = new SimplifyCrvDialog(inputCurves, conduit);
-            
             var parent = RhinoEtoApp.MainWindowForDocument(doc);
+            
             dialog.ShowSemiModal(doc, parent);
 
             conduit.Enabled = false;
             doc.Views.Redraw();
 
-            if (dialog.Result && dialog.ResultCurves != null)
+            // FIX: Cancel if no options are checked, user clicked Cancel, OR if all deltas are 0
+            if (!dialog.Result || !dialog.AnyOptionChecked || !dialog.HasChanges || dialog.ResultCurves == null)
             {
-                int replacedCount = 0;
-                for (int i = 0; i < objRefs.Length; i++)
-                {
-                    if (i < dialog.ResultCurves.Count && dialog.ResultCurves[i] != null)
-                    {
-                        if (doc.Objects.Replace(objRefs[i].ObjectId, dialog.ResultCurves[i]))
-                        {
-                            replacedCount++;
-                        }
-                    }
-                }
-                
-                RhinoApp.WriteLine($"Successfully simplified {replacedCount} curve(s).");
-                doc.Views.Redraw();
-                return Result.Success;
+                return Result.Cancel;
             }
 
-            return Result.Cancel;
+            int replacedCount = 0;
+            for (int i = 0; i < objRefs.Length; i++)
+            {
+                if (i < dialog.ResultCurves.Count && dialog.ResultCurves[i] != null)
+                {
+                    if (doc.Objects.Replace(objRefs[i].ObjectId, dialog.ResultCurves[i]))
+                    {
+                        replacedCount++;
+                    }
+                }
+            }
+            
+            if (replacedCount > 0)
+            {
+                RhinoApp.WriteLine($"Successfully simplified {replacedCount} curve(s).");
+            }
+            
+            doc.Views.Redraw();
+            return Result.Success;
         }
     }
 }

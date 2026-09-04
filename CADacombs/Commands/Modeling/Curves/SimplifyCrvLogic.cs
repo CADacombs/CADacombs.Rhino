@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Rhino;
 using Rhino.Geometry;
 using CADacombs.Core.Curves;
 
@@ -8,97 +7,91 @@ namespace CADacombs.Commands.Modeling.Curves
 {
     public static class SimplifyCrvLogic
     {
-        public static (Curve ResultCurve, string Report) ExecutePipeline(
-            Curve input, 
-            double devTol, 
-            double minLen, 
-            bool doNative,
-            bool doLines, 
-            bool doArcs)
+        public static (Curve ResultCurve, int OriginalSegments, int NewSegments) ExecutePipeline(
+            Curve inputCurve, 
+            double distTol, 
+            double angleTol,
+            bool doSpansToLines, 
+            bool doSpansToArcs, 
+            bool doPolylineOutput)
         {
-            if (input == null) return (null, "No input.");
+            if (inputCurve == null) return (null, 0, 0);
 
-            Curve wipCurve = input.DuplicateCurve();
-            string report = "Pipeline Started:\n";
+            int originalSegs = (inputCurve is PolyCurve pcOriginal) ? pcOriginal.SegmentCount : 1;
+            Curve currentCurve = inputCurve.DuplicateCurve();
 
-            // 1. Native Simplify (Baseline)
-            if (doNative)
+            // Helper function to process spans across an entire curve or PolyCurve
+            Curve ProcessSpans(Curve curve, SpanConversionUtils.CurveEvaluator evaluator, bool tolByRatio, double tolRatio, double devTol, double minLen)
             {
-                Curve nativeSimp = wipCurve.Simplify(
-                    CurveSimplifyOptions.Merge | CurveSimplifyOptions.SplitAtFullyMultipleKnots, 
-                    devTol, 
-                    RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
-
-                if (nativeSimp != null)
+                if (curve is PolyCurve pc)
                 {
-                    wipCurve = nativeSimp;
-                    report += $"- Native simplify applied.\n";
+                    PolyCurve newPc = new PolyCurve();
+                    bool modified = false;
+                    
+                    for (int i = 0; i < pc.SegmentCount; i++)
+                    {
+                        Curve seg = pc.SegmentCurve(i);
+                        var nc = seg.ToNurbsCurve();
+                        var result = SpanConversionUtils.ConvertBetweenKnots(nc, evaluator, tolByRatio, tolRatio, devTol, minLen);
+                        
+                        if (result.HasValue)
+                        {
+                            modified = true;
+                            foreach (var resSeg in result.Value.Segments) newPc.Append(resSeg);
+                        }
+                        else
+                        {
+                            newPc.Append(seg);
+                        }
+                    }
+                    return modified ? newPc : curve;
+                }
+                else
+                {
+                    var nc = curve.ToNurbsCurve();
+                    var result = SpanConversionUtils.ConvertBetweenKnots(nc, evaluator, tolByRatio, tolRatio, devTol, minLen);
+                    
+                    if (result.HasValue)
+                    {
+                        if (result.Value.Segments.Length == 1) return result.Value.Segments[0];
+                        PolyCurve newPc = new PolyCurve();
+                        foreach (var resSeg in result.Value.Segments) newPc.Append(resSeg);
+                        return newPc;
+                    }
+                    return curve;
                 }
             }
 
-            // 2. Custom Convert Spans to Lines
-            if (doLines)
+            // 1. Convert Spans to Lines
+            if (doSpansToLines)
             {
-                var ncWip = wipCurve.ToNurbsCurve();
-                var lineResult = SpanConversionUtils.ConvertBetweenKnots(
-                    ncWip,
-                    seg => ConvertToLineLogic.GetLineCurve(seg, devTol),
-                    ConvertToLineOptions.TolByRatio,
-                    ConvertToLineOptions.TolRatio,
-                    devTol,
-                    minLen);
-
-                if (lineResult != null)
-                {
-                    wipCurve = JoinSegments(lineResult.Value.Segments, wipCurve);
-                    report += $"- Line spans converted (Max Dev: {lineResult.Value.MaxDev:E3}).\n";
-                }
+                SpanConversionUtils.CurveEvaluator lineEval = c => {
+                    var res = ConvertToLineLogic.GetLineCurve(c, distTol); //
+                    return (res.lineCurve, res.deviation, res.log); //
+                };
+                currentCurve = ProcessSpans(currentCurve, lineEval, ConvertToLineOptions.TolByRatio, ConvertToLineOptions.TolRatio, distTol, ConvertToLineOptions.MinNewCrvLen); //[cite: 21]
             }
 
-            // 3. Custom Convert Spans to Arcs
-            if (doArcs)
+            // 2. Convert Spans to Arcs
+            if (doSpansToArcs)
             {
-                var ncWip = wipCurve.ToNurbsCurve();
-                var arcResult = SpanConversionUtils.ConvertBetweenKnots(
-                    ncWip,
-                    seg => ConvertToArcLogic.GetArcCurve(seg, devTol),
-                    ConvertToArcOptions.TolByRatio,
-                    ConvertToArcOptions.TolRatio,
-                    devTol,
-                    minLen);
-
-                if (arcResult != null)
-                {
-                    wipCurve = JoinSegments(arcResult.Value.Segments, wipCurve);
-                    report += $"- Arc spans converted (Max Dev: {arcResult.Value.MaxDev:E3}).\n";
-                }
+                SpanConversionUtils.CurveEvaluator arcEval = c => {
+                    var res = ConvertToArcLogic.GetArcCurve(c, distTol); //[cite: 15]
+                    return (res.arcCurve, res.deviation, res.log); //[cite: 18]
+                };
+                currentCurve = ProcessSpans(currentCurve, arcEval, ConvertToArcOptions.TolByRatio, ConvertToArcOptions.TolRatio, distTol, ConvertToArcOptions.MinNewCrvLen); //[cite: 20]
             }
 
-            int segCount = (wipCurve is PolyCurve pc) ? pc.SegmentCount : 1;
-            report += $"\nFinal Result: {wipCurve.GetType().Name} ({segCount} segment(s)).";
-
-            return (wipCurve, report);
-        }
-
-        /// <summary>
-        /// Helper to join the returned segments back into a single PolyCurve/PolylineCurve.
-        /// </summary>
-        private static Curve JoinSegments(Curve[] segments, Curve fallback)
-        {
-            if (segments == null || segments.Length == 0) return fallback;
-            if (segments.Length == 1) return segments[0];
-
-            PolyCurve pcOut = new PolyCurve();
-            foreach (var seg in segments)
+            // 3. Polyline Output (Merge contiguous lines)
+            if (doPolylineOutput)
             {
-                pcOut.Append(seg);
+                currentCurve = PolylineOutputLogic.Execute(currentCurve); //[cite: 10]
             }
 
-            // Clean up to PolylineCurve if possible
-            if (pcOut.TryGetPolyline(out Polyline pl))
-                return new PolylineCurve(pl);
+            int newSegs = (currentCurve is PolyCurve pcNew) ? pcNew.SegmentCount : 1;
+            if (currentCurve is PolylineCurve) newSegs = 1; // A single polyline acts as 1 segment object
 
-            return pcOut;
+            return (currentCurve, originalSegs, newSegs);
         }
     }
 }
