@@ -18,7 +18,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
         public static ConvertToArcCommand Instance { get; private set; }
 
-        public override string EnglishName => "spb_ConvertCrvToArc";
+        public override string EnglishName => "ccConvertCrvToArc";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {

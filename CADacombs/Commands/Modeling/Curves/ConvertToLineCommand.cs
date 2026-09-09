@@ -18,7 +18,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
         public static ConvertToLineCommand Instance { get; private set; }
 
-        public override string EnglishName => "spb_ConvertCrvToLine";
+        public override string EnglishName => "ccConvertCrvToLine";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {

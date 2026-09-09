@@ -19,7 +19,7 @@ namespace CADacombs.Commands.Modeling
 
         public static DrapeCommand Instance { get; private set; }
 
-        public override string EnglishName => "spb_Drape";
+        public override string EnglishName => "ccDrape";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {

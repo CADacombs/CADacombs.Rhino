@@ -1,9 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetExt>.rhp</TargetExt>
-    <TargetFrameworks>net48;net8.0</TargetFrameworks>
+    
+    <!-- Build only for .NET 8 during Debug -->
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">net8.0</TargetFrameworks>
+    <!-- Build for both .NET Framework 4.8 and .NET 8 during Release -->
+    <TargetFrameworks Condition="'$(Configuration)' == 'Release'">net48;net8.0</TargetFrameworks>
+    
     <AssemblyName>CADacombs</AssemblyName>
-	
     <Title>CADacombs for Rhino</Title>
     <Version>0.2.6-alpha</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

@@ -19,7 +19,7 @@ namespace CADacombs.Commands.Modeling
 
         public static EndBulgeCommand Instance { get; private set; }
 
-        public override string EnglishName => "spb_EndBulge";
+        public override string EnglishName => "ccEndBulge";
         
         private static bool _edgeForCrvNotSrf = false;
 

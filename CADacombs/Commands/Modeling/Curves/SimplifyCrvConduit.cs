@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Drawing;
+using Rhino;
 using Rhino.Display;
 using Rhino.Geometry;
 using CADacombs.Core.Curves;
@@ -16,6 +18,12 @@ namespace CADacombs.Commands.Modeling.Curves
         public bool HighlightLines { get; set; } = true;
         public bool HighlightArcs { get; set; } = true;
 
+        // Default tolerances for the conduit preview
+        private double _distTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+        private double _g1AngleTolDeg = RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
+        private double _g2PlusAngleTolDeg = 2.0;
+        private double _vectMagTolPct = 5.0;
+
         protected override void CalculateBoundingBox(CalculateBoundingBoxEventArgs e)
         {
             base.CalculateBoundingBox(e);
@@ -28,6 +36,8 @@ namespace CADacombs.Commands.Modeling.Curves
         protected override void PostDrawObjects(DrawEventArgs e)
         {
             base.PostDrawObjects(e);
+
+            List<(Point3d Pt, string Label, Color Color)> previewDots = new List<(Point3d, string, Color)>();
 
             foreach (var previewCurve in PreviewCurves)
             {
@@ -47,143 +57,104 @@ namespace CADacombs.Commands.Modeling.Curves
 
                 if (ShowContinuity)
                 {
-                    // 1. Draw continuity between explicitly separated segments in PolyCurves
-                    if (previewCurve is PolyCurve pCurve)
-                    {
-                        for (int i = 1; i < pCurve.SegmentCount; i++)
-                        {
-                            Curve segBelow = pCurve.SegmentCurve(i - 1);
-                            Curve segAbove = pCurve.SegmentCurve(i);
-                            
-                            Point3d pt = segAbove.PointAtStart;
-                            string label = ContinuityUtils.GetSpbContinuityBetweenSegments(segBelow, segAbove);
-                            
-                            // Append the "+" for G2 limits
-                            if (label == "G2") label = "G2+";
-                            
-                            Color color = Color.Red; 
-                            if (label == "G2+") color = Color.LimeGreen;
-                            else if (label == "G1") color = Color.Gold;
-
-                            e.Display.DrawDot(pt, label, color, Color.Black);
-                        }
-                    }
-
-                    // 2. Draw explicit G0 dots at internal vertices of Polylines
-                    DrawInternalPolylineG0Dots(e, previewCurve);
-                    
-                    // 3. Draw dots at interior knots of raw NURBS curves
-                    DrawNurbsInteriorContinuity(e, previewCurve);
-
-                    // 4. Draw the Seam dot for ALL closed curves
-                    if (previewCurve.IsClosed)
-                    {
-                        DrawClosedSeam(e, previewCurve);
-                    }
+                    EvaluateCurve(previewCurve, previewDots);
                 }
+            }
+
+            // Draw all compiled continuity dots
+            foreach (var dot in previewDots)
+            {
+                e.Display.DrawDot(dot.Pt, dot.Label, dot.Color, Color.Black);
             }
         }
 
-        private void DrawNurbsInteriorContinuity(DrawEventArgs e, Curve curve)
+        private void EvaluateCurve(Curve crv, List<(Point3d, string, Color)> outDots)
         {
-            if (curve == null || curve is PolylineCurve) return;
-
-            // If it's a PolyCurve, dig inside and evaluate its individual segments
-            if (curve is PolyCurve pc)
+            if (crv is PolylineCurve plc)
             {
-                for (int i = 0; i < pc.SegmentCount; i++)
+                for (int i = 1; i < plc.PointCount - 1; i++) AddDotRecord(outDots, plc.Point(i), "G0");
+            }
+            else if (crv is PolyCurve pc)
+            {
+                for (int i = 1; i < pc.SegmentCount; i++)
                 {
-                    DrawNurbsInteriorContinuity(e, pc.SegmentCurve(i));
+                    Curve segB = pc.SegmentCurve(i - 1);
+                    Curve segA = pc.SegmentCurve(i);
+                    ProcessJoin(segB, segB.Domain.T1, segA, segA.Domain.T0, outDots);
                 }
-                return;
-            }
-
-            double[] spans = curve.SpanVector();
-            if (spans == null || spans.Length <= 2) return; 
-
-            for (int i = 1; i < spans.Length - 1; i++)
-            {
-                double t = spans[i];
-                string label = ContinuityUtils.GetSpbContinuity(curve, t);
                 
-                // Append the "+" for G2 limits
-                if (label == "G2") label = "G2+";
-                
-                Color color = Color.Red; 
-                if (label == "G2+") color = Color.LimeGreen;
-                else if (label == "G1") color = Color.Gold;
-
-                e.Display.DrawDot(curve.PointAt(t), label, color, Color.Black);
-            }
-
-        }
-
-        private void DrawClosedSeam(DrawEventArgs e, Curve curve)
-        {
-            string label = "G0"; 
-            Color color = Color.Red;
-
-            if (curve is PolylineCurve)
-            {
-                label = "G0";
-            }
-            else if (curve is PolyCurve pc && pc.SegmentCount > 1)
-            {
-                label = ContinuityUtils.GetSpbContinuityBetweenSegments(pc.SegmentCurve(pc.SegmentCount - 1), pc.SegmentCurve(0));
-                if (label == "G2") label = "G2+";
-            }
-            else
-            {
-                // Manually evaluate the start and end vectors to avoid Rhino's IsContinuous seam quirks
-                Vector3d tStart = curve.TangentAt(curve.Domain.Min);
-                Vector3d tEnd = curve.TangentAt(curve.Domain.Max);
-                
-                double angleTol = Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceRadians;
-                
-                // 1 = parallel (same direction), -1 = anti-parallel, 0 = not parallel
-                if (tStart.IsParallelTo(tEnd, angleTol) == 1) 
-                {
-                    Vector3d kStart = curve.CurvatureAt(curve.Domain.Min);
-                    Vector3d kEnd = curve.CurvatureAt(curve.Domain.Max);
-                    
-                    if (kStart.EpsilonEquals(kEnd, 1e-5)) label = "G2+";
-                    else label = "G1";
-                }
-                else
-                {
-                    label = "G0";
-                }
-            }
-
-            if (label == "G-inf" || label == "G3") color = Color.Cyan;
-            else if (label == "G2+") color = Color.LimeGreen;
-            else if (label == "G1") color = Color.Gold;
-
-            e.Display.DrawDot(curve.PointAtStart, label, color, Color.Black);
-        }
-
-        private void DrawInternalPolylineG0Dots(DrawEventArgs e, Curve curve)
-        {
-            if (curve is PolylineCurve plc)
-            {
-                for (int i = 1; i < plc.PointCount - 1; i++)
-                {
-                    e.Display.DrawDot(plc.Point(i), "G0", Color.Red, Color.Black);
-                }
-            }
-            else if (curve is PolyCurve pc)
-            {
                 for (int i = 0; i < pc.SegmentCount; i++)
                 {
                     if (pc.SegmentCurve(i) is PolylineCurve subPlc)
                     {
                         for (int j = 1; j < subPlc.PointCount - 1; j++)
-                        {
-                            e.Display.DrawDot(subPlc.Point(j), "G0", Color.Red, Color.Black);
-                        }
+                            AddDotRecord(outDots, subPlc.Point(j), "G0");
+                    }
+                    else
+                    {
+                        EvaluateInnerKnots(pc.SegmentCurve(i), outDots);
                     }
                 }
             }
+            else
+            {
+                EvaluateInnerKnots(crv, outDots);
+            }
+
+            if (crv.IsClosed)
+            {
+                ProcessJoin(crv, crv.Domain.Max, crv, crv.Domain.Min, outDots);
+            }
+        }
+
+        private void EvaluateInnerKnots(Curve crv, List<(Point3d, string, Color)> outDots)
+        {
+            if (crv is PolylineCurve || crv is LineCurve || crv is ArcCurve) return;
+
+            NurbsCurve nc = crv.ToNurbsCurve();
+            if (nc == null) return;
+
+            double[] spans = nc.SpanVector();
+            if (spans == null || spans.Length <= 2) return;
+
+            for (int i = 1; i < spans.Length - 1; i++)
+            {
+                ProcessJoin(nc, spans[i], nc, spans[i], outDots);
+            }
+        }
+
+        private void ProcessJoin(Curve cB, double tB, Curve cA, double tA, List<(Point3d, string, Color)> outDots)
+        {
+            NurbsCurve ncB = cB.ToNurbsCurve();
+            NurbsCurve ncA = cA.ToNurbsCurve();
+            if (ncB == null || ncA == null) return;
+
+            bool isGInf = ContinuityUtils.IsGInfinity(ncA, tA, CurveEvaluationSide.Above, ncB, tB, CurveEvaluationSide.Below, _g1AngleTolDeg);
+            
+            var vB = ContinuityUtils.GetContinuityVectorsAt(ncB, tB, CurveEvaluationSide.Below);
+            var vA = ContinuityUtils.GetContinuityVectorsAt(ncA, tA, CurveEvaluationSide.Above);
+
+            if (isGInf)
+            {
+                AddDotRecord(outDots, vA.Pt, "G∞");
+                return;
+            }
+
+            int? gLevel = ContinuityUtils.GetContinuityLevel(vB, vA, _distTol, _g1AngleTolDeg, _g2PlusAngleTolDeg, _vectMagTolPct);
+            AddDotRecord(outDots, vA.Pt, ContinuityUtils.FormatContinuityString(gLevel));
+        }
+
+        private void AddDotRecord(List<(Point3d, string, Color)> outDots, Point3d pt, string label)
+        {
+            Color color = Color.Gray;
+            if (label == "Gap") color = Color.DarkRed;
+            else if (label == "G0") color = Color.Red;
+            else if (label == "G1") color = Color.Gold;
+            else if (label == "G2") color = Color.YellowGreen;
+            else if (label == "G3+") color = Color.LimeGreen;
+            else if (label == "G∞") color = Color.Cyan;
+
+            outDots.Add((pt, label, color));
         }
 
         private void DrawSingleSegment(DrawEventArgs e, Curve seg)
@@ -199,7 +170,9 @@ namespace CADacombs.Commands.Modeling.Curves
             }
             else if (isArcSegment && HighlightArcs)
             {
-                e.Display.DrawCurve(seg, Color.Cyan, 4);
+                // Utilize Rhino's native feedback color for arc previews
+                Color feedbackColor = Rhino.ApplicationSettings.AppearanceSettings.FeedbackColor;
+                e.Display.DrawCurve(seg, feedbackColor, 4);
             }
             else
             {

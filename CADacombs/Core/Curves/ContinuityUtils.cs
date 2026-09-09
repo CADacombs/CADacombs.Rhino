@@ -6,16 +6,11 @@ namespace CADacombs.Core.Curves
 {
     public static class ContinuityUtils
     {
-        /// <summary>
-        /// Extracts the mathematical vectors required for up to G3 continuity evaluation.
-        /// Now accepts generic Curve (not just NurbsCurve) to support raw segment evaluation.
-        /// </summary>
         public static (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) GetContinuityVectorsAt(
             Curve crv, double t, CurveEvaluationSide side)
         {
             Vector3d[] derivs = crv.DerivativeAt(t, 3, side);
 
-            // If 1st derivative is tiny (e.g. stacked CVs), return zeroes
             if (derivs[1].IsTiny()) 
                 return (new Point3d(derivs[0]), Vector3d.Zero, Vector3d.Zero, Vector3d.Zero);
 
@@ -28,7 +23,6 @@ namespace CADacombs.Core.Curves
             Vector3d cross1 = Vector3d.CrossProduct(d1, d2);
             Vector3d curvature = Vector3d.CrossProduct(cross1, d1) / Math.Pow(d1.Length, 4);
 
-            // Torsion / G3 Condition
             Vector3d torsionPart1 = (-3.0 * (d1 * d2) * cross1) / Math.Pow(d1 * d1, 3.0);
             Vector3d torsionPart2 = Vector3d.CrossProduct(d1, d3) / Math.Pow(d1 * d1, 2.0);
             Vector3d torsion = torsionPart1 + torsionPart2;
@@ -36,9 +30,82 @@ namespace CADacombs.Core.Curves
             return (new Point3d(derivs[0]), tangent, curvature, torsion);
         }
 
-        /// <summary>
-        /// Evaluates Parametric (C) continuity by comparing derivative vectors directly.
-        /// </summary>
+        public static int? GetContinuityLevel(
+            (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) vB, 
+            (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) vA,
+            double distTol, double g1AngleTolDeg, double g2PlusAngleTolDeg, double vectMagTolPct)
+        {
+            if (vB.Pt.DistanceTo(vA.Pt) > distTol) return null; // Not G0
+            if (vB.Tangent.IsTiny() || vA.Tangent.IsTiny()) return null; // Stacked points
+
+            double angleTan = RhinoMath.ToDegrees(Vector3d.VectorAngle(vB.Tangent, vA.Tangent));
+            if (angleTan > g1AngleTolDeg) return 0; 
+
+            if (vB.Curvature.IsTiny() && vA.Curvature.IsTiny())
+            {
+                if (vB.Torsion.IsTiny() && vA.Torsion.IsTiny()) return 3;
+                return 2;
+            }
+
+            if (vB.Curvature.IsTiny() || vA.Curvature.IsTiny()) return 1; 
+
+            double angleCrv = RhinoMath.ToDegrees(Vector3d.VectorAngle(vB.Curvature, vA.Curvature));
+            if (angleCrv > g2PlusAngleTolDeg) return 1; 
+
+            double kB = vB.Curvature.Length;
+            double kA = vA.Curvature.Length;
+            if (Math.Abs(kB - kA) / Math.Max(kB, kA) > (vectMagTolPct / 100.0)) return 1; 
+
+            if (vB.Torsion.IsTiny() && vA.Torsion.IsTiny()) return 3;
+            if (vB.Torsion.IsTiny() || vA.Torsion.IsTiny()) return 2; 
+
+            double angleTors = RhinoMath.ToDegrees(Vector3d.VectorAngle(vB.Torsion, vA.Torsion));
+            if (angleTors > g2PlusAngleTolDeg) return 2; 
+
+            double tB = vB.Torsion.Length;
+            double tA = vA.Torsion.Length;
+            if (Math.Abs(tB - tA) / Math.Max(tB, tA) > (vectMagTolPct / 100.0)) return 2; 
+
+            return 3; 
+        }
+
+        public static string FormatContinuityString(int? gLevel)
+        {
+            if (!gLevel.HasValue) return "Gap";
+            if (gLevel.Value == 3) return "G3+";
+            return $"G{gLevel.Value}";
+        }
+
+        public static string GetSpbContinuity(Curve crv, double t)
+        {
+            var vB = GetContinuityVectorsAt(crv, t, CurveEvaluationSide.Below);
+            var vA = GetContinuityVectorsAt(crv, t, CurveEvaluationSide.Above);
+            
+            int? level = GetContinuityLevel(
+                vB, vA, 
+                RhinoDoc.ActiveDoc.ModelAbsoluteTolerance, 
+                RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees, 
+                2.0, 
+                5.0);
+
+            return FormatContinuityString(level);
+        }
+
+        public static string GetSpbContinuityBetweenSegments(Curve segBelow, Curve segAbove)
+        {
+            var vB = GetContinuityVectorsAt(segBelow, segBelow.Domain.T1, CurveEvaluationSide.Below);
+            var vA = GetContinuityVectorsAt(segAbove, segAbove.Domain.T0, CurveEvaluationSide.Above);
+
+            int? level = GetContinuityLevel(
+                vB, vA, 
+                RhinoDoc.ActiveDoc.ModelAbsoluteTolerance, 
+                RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees, 
+                2.0, 
+                5.0);
+
+            return FormatContinuityString(level);
+        }
+
         public static int GetParametricContinuity(
             NurbsCurve ncA, double tA, CurveEvaluationSide sideA,
             NurbsCurve ncB, double tB, CurveEvaluationSide sideB, 
@@ -67,59 +134,64 @@ namespace CADacombs.Core.Curves
         }
 
         /// <summary>
-        /// Evaluates continuity at a specific parameter internally using SPB custom tolerance logic.
+        /// Mathematically verifies true geometric G-infinity by normalizing the parametric domain
+        /// of Curve B to match the exact evaluation speed of Curve A before testing C-infinity.
+        /// Automatically upgrades geometrically identical Degree 1 and 2 spans to G-infinity.
         /// </summary>
-        public static string GetSpbContinuity(Curve crv, double t)
+        public static bool IsGInfinity(
+            NurbsCurve ncA, double tA, CurveEvaluationSide sideA,
+            NurbsCurve ncB, double tB, CurveEvaluationSide sideB, 
+            double g1AngleTolDeg = 1.0, double lengthTol = 1.49e-8)
         {
-            double g1AngleTolRad = RhinoDoc.ActiveDoc.ModelAngleToleranceRadians;
-            double g2AngleTolRad = RhinoMath.ToRadians(2.0);
-            double crvDeltaTolerance = 0.05;
+            int maxDegree = Math.Max(ncA.Degree, ncB.Degree);
+            Vector3d[] derivsA = ncA.DerivativeAt(tA, maxDegree, sideA);
+            Vector3d[] derivsB = ncB.DerivativeAt(tB, maxDegree, sideB);
 
-            var (_, tanB, crvB, _) = GetContinuityVectorsAt(crv, t, CurveEvaluationSide.Below);
-            var (_, tanA, crvA, _) = GetContinuityVectorsAt(crv, t, CurveEvaluationSide.Above);
+            if (derivsA[1].IsTiny() || derivsB[1].IsTiny()) return false;
 
-            if (Vector3d.VectorAngle(tanB, tanA) > g1AngleTolRad) return "G0";
+            double angleTolRad = RhinoMath.ToRadians(g1AngleTolDeg);
+            
+            // 1. Ensure they flow in the exact same direction (G1 alignment)
+            if (derivsA[1].IsParallelTo(derivsB[1], angleTolRad) != 1) return false;
 
-            bool belowIsLinear = crvB.IsTiny();
-            bool aboveIsLinear = crvA.IsTiny();
+            // 2. Degree 1 & 2 Shortcut (Lines and Conic Arcs)
+            // A line or conic cannot mathematically diverge if it matches exactly at G3.
+            if (maxDegree <= 2)
+            {
+                var vA = GetContinuityVectorsAt(ncA, tA, sideA);
+                var vB = GetContinuityVectorsAt(ncB, tB, sideB);
+                
+                // Use strict internal tolerances to verify exact geometric continuation
+                int? gLevel = GetContinuityLevel(
+                    vB, vA, 
+                    RhinoDoc.ActiveDoc.ModelAbsoluteTolerance, 
+                    g1AngleTolDeg, 
+                    0.5, // Strict angle tolerance (degrees)
+                    1.0  // Strict magnitude delta (%)
+                );
+                    
+                if (gLevel == 3) return true;
+            }
 
-            if (belowIsLinear && aboveIsLinear) return "G2";
-            if (belowIsLinear || aboveIsLinear) return "G1";
-            if (Vector3d.VectorAngle(crvB, crvA) > g2AngleTolRad) return "G1";
+            // 3. Calculate the parametric speed ratio for higher degree curves
+            double scale = derivsB[1].Length / derivsA[1].Length;
 
-            double kBelow = crvB.Length;
-            double kAbove = crvA.Length;
-            if (Math.Abs(kBelow - kAbove) / Math.Max(kBelow, kAbove) > crvDeltaTolerance) return "G1";
+            // 4. If domains are already identically paced, a standard C-check is sufficient
+            if (Math.Abs(scale - 1.0) <= 1e-6)
+            {
+                return GetParametricContinuity(ncA, tA, sideA, ncB, tB, sideB, lengthTol) == int.MaxValue;
+            }
 
-            return "G2";
-        }
+            // 5. Duplicate and scale Curve B's domain to match Curve A's parametric speed
+            NurbsCurve ncB_scaled = (NurbsCurve)ncB.Duplicate();
+            Interval oldDom = ncB.Domain;
+            double tB_norm = oldDom.NormalizedParameterAt(tB);
+            
+            ncB_scaled.Domain = new Interval(oldDom.T0 * scale, oldDom.T1 * scale);
+            double tB_scaled = ncB_scaled.Domain.ParameterAt(tB_norm);
 
-        /// <summary>
-        /// Evaluates continuity across two distinct segments (used by PolyCurve seams).
-        /// </summary>
-        public static string GetSpbContinuityBetweenSegments(Curve segBelow, Curve segAbove)
-        {
-            double g1AngleTolRad = RhinoDoc.ActiveDoc.ModelAngleToleranceRadians;
-            double g2AngleTolRad = RhinoMath.ToRadians(2.0);
-            double crvDeltaTolerance = 0.05;
-
-            var (_, tanB, crvB, _) = GetContinuityVectorsAt(segBelow, segBelow.Domain.T1, CurveEvaluationSide.Below);
-            var (_, tanA, crvA, _) = GetContinuityVectorsAt(segAbove, segAbove.Domain.T0, CurveEvaluationSide.Above);
-
-            if (Vector3d.VectorAngle(tanB, tanA) > g1AngleTolRad) return "G0";
-
-            bool belowIsLinear = crvB.Length <= 1e-9;
-            bool aboveIsLinear = crvA.Length <= 1e-9;
-
-            if (belowIsLinear && aboveIsLinear) return "G2";
-            if (belowIsLinear || aboveIsLinear) return "G1";
-            if (Vector3d.VectorAngle(crvB, crvA) > g2AngleTolRad) return "G1";
-
-            double kBelow = crvB.Length;
-            double kAbove = crvA.Length;
-            if (Math.Abs(kBelow - kAbove) / Math.Max(kBelow, kAbove) > crvDeltaTolerance) return "G1";
-
-            return "G2";
+            // 6. Test if the geometry is identically polynomial across all derivative magnitudes
+            return GetParametricContinuity(ncA, tA, sideA, ncB_scaled, tB_scaled, sideB, lengthTol) == int.MaxValue;
         }
     }
 }

@@ -18,7 +18,7 @@ namespace CADacombs.Commands.Modeling
 
         public static EdgeSrfCommand Instance { get; private set; }
 
-        public override string EnglishName => "spb_EdgeSrf";
+        public override string EnglishName => "ccEdgeSrf";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {

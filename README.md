@@ -1,13 +1,15 @@
 # CADacombs for Rhino
 
-A growing collection of NURBS curve and surface modeling tools for Rhinoceros 3D.
+A growing collection of NURBS curve and surface modeling and analysis tools for tools for Rhinoceros 3D.
 
 ---
 
 ## Included Commands
 
-### 1. spb_EdgeSrf
-`spb_EdgeSrf` is a high-precision alternative to Rhino's native `_EdgeSrf`, capable of establishing face-face continuity (G1 and G2) directly during surface generation, similar to running a restricted `_MatchSrf` immediately after surface creation.
+### Surface Commands
+
+#### 1. ccEdgeSrf
+`ccEdgeSrf` is a high-precision alternative to Rhino's native `_EdgeSrf`, capable of establishing face-face continuity (G1 and G2) directly during surface generation, similar to running a restricted `_MatchSrf` immediately after surface creation.
 
 **Key Features:**
 * **Flexible Input:** Creates a surface from 2, 3, or 4 open curves.
@@ -19,8 +21,8 @@ A growing collection of NURBS curve and surface modeling tools for Rhinoceros 3D
 * **Corner Averaging:** Intelligently averages intersecting G1/G2 adjustments at corners so boundaries flow together seamlessly.
 * **NURBS Precision:** The output surface may contain more knot vectors than native `_EdgeSrf` to ensure absolute mathematical compliance with the requested continuity.
 
-### 2. spb_Drape
-`spb_Drape` is an advanced alternative to Rhino's native `_Drape` command, utilizing Greville point locations to fit an open, degree-3 NURBS surface precisely over target Breps and Meshes.
+#### 2. ccDrape
+`ccDrape` is an advanced alternative to Rhino's native `_Drape` command, utilizing Greville point locations to fit an open, degree-3 NURBS surface precisely over target Breps and Meshes.
 
 **Key Features:**
 * **Starting Surface Flexibility:** Automatically generates a starting surface based on the bounding box and span spacing of the target objects, or allows you to select your own custom starting surface.
@@ -28,8 +30,8 @@ A growing collection of NURBS curve and surface modeling tools for Rhinoceros 3D
 * **Advanced Miss Handling:** Handles "missed" target projections with customizable resolution strategies: lock to the starting surface, use the lowest hit neighbor, or linearly extrapolate from the nearest hits.
 * **High-To-Low Fitting:** Employs an iterative High-to-Low elevation sorting algorithm to achieve a smooth, mathematically precise drape that rests seamlessly on the target without clipping through.
 
-### 3. spb_MatchSrf
-`spb_MatchSrf` is a precise complement to Rhino's native `_MatchSrf`, designed to strictly preserve input knot and control point structures when matching untrimmed surface edges.
+#### 3. ccMatchSrf
+`ccMatchSrf` is a precise complement to Rhino's native `_MatchSrf`, designed to strictly preserve input knot and control point structures when matching untrimmed surface edges.
 
 **Key Features:**
 * **Structural Fidelity:** Produces surfaces that follow the input knot and point structures as closely as mathematically possible, rather than refitting the entire surface.
@@ -38,8 +40,8 @@ A growing collection of NURBS curve and surface modeling tools for Rhinoceros 3D
 * **Smart Upgrading:** Automatically transfers unique knots and safely handles matching to reference surfaces of lesser or greater degrees.
 * **Non-Destructive Options:** Includes toggles to replace the original surface or add a new one, maintain degree (by adding spans instead), and an echo mode for detailed command-line reporting.
 
-### 4. spb_EndBulge
-`spb_EndBulge` is an interactive alternative to Rhino's native `_EndBulge` command, featuring dialog controls instead of graphics window grip translation.
+#### 4. ccEndBulge
+`ccEndBulge` is an interactive alternative to Rhino's native `_EndBulge` command, featuring dialog controls instead of graphics window grip translation.
 
 **Key Differences from Native `_EndBulge`**
 * **Command Line & Dialog Interfaces:**
@@ -61,8 +63,46 @@ A growing collection of NURBS curve and surface modeling tools for Rhinoceros 3D
 * Core function restricts and modifies $p_1$ and $p_2$ locations predictably.
 * Viewport analysis modes (e.g., Zebra, Draft Angle, Shaded Views) remain active and dynamically update during slider adjustments.
 
-### 5. spb_CADacombsAbout
-Displays the current plugin version, author credits, and license information.
+---
+
+### Curve Commands
+
+#### 5. ccRemoveCrvKnots
+`ccRemoveCrvKnots` optimizes interior knots without altering physical curve geometry.
+
+* **Domain Normalization:** Applies $D(A) = D(R) \cdot \frac{L(A)}{L(R)}$ across fully multiple joints to equalize derivative speeds before knot deletion, eliminating control point distortion.
+* **Multi-Strategy Solver:** Runs parallel brute-force evaluations (Singular/Plural, Forward/Reverse, and Multiplicity Bracketing) to return the curve with the fewest possible knots within deviation tolerance.
+
+#### 6. ccConvertCrvToBezier
+`ccConvertCrvToBezier` converts multi-span NURBS curves into single-span Bezier curves.
+
+* **Adaptive Cubic Bulge-Fitting:** Uses high-speed iterative tangent-sliding loops for degree-3 targets.
+* **Fallback Engine:** Employs native rebuild fallbacks for arbitrary target degrees, enforcing strict tangency preservation and deviation limits.
+
+#### 7. ccConvertCrvToArc & ccConvertCrvToLine
+* **ccConvertCrvToArc:** Converts planar curve spans or entire curves into exact arc segments within tolerance.
+* **ccConvertCrvToLine:** Replaces linear curve spans with exact line segments.
+
+#### 8. ccSimplifyCrv
+`ccSimplifyCrv` performs greedy span evaluation along curve sub-domains to replace qualified spans with lines, arcs, or Bezier curves while enforcing G1/G2 continuity across joints.
+
+---
+
+### Analysis Commands
+
+#### 9. ccGCon
+`ccGCon` measures geometric continuity ($G0$, $G1$, $G2$, $G3$, $G^\infty$) between two curves at a junction using normalized domain scaling and $G3$ geometric matching.
+
+#### 10. ccCrvContinuities & ccCrvDiscontinuities
+* **ccCrvContinuities:** Reports geometric continuity levels across all internal span joints of selected curves.
+* **ccCrvDiscontinuities:** Locates and marks curve parameters where continuity drops below a requested target tier.
+
+---
+
+### Utility Commands
+
+#### 11. ccCADacombsAbout
+Displays plugin version information, developer credits, and license details.
 
 ---
 

@@ -14,7 +14,7 @@ namespace CADacombs.Commands.Analysis.Curves
     {
         public CompareCurveContinuityCommand() { Instance = this; }
         public static CompareCurveContinuityCommand Instance { get; private set; }
-        public override string EnglishName => "spb_GCon";
+        public override string EnglishName => "ccGCon";
 
         // Sticky Options
         private double _distTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
@@ -180,21 +180,18 @@ namespace CADacombs.Commands.Analysis.Curves
             var vecsA = ContinuityUtils.GetContinuityVectorsAt(ncA, evalTA, sideA);
             var vecsB = ContinuityUtils.GetContinuityVectorsAt(ncB, evalTB, sideB);
 
-            int? gCont = GetContinuityG(vecsA, vecsB);
+            // Process true continuities using the central engine
+            int? gCont = ContinuityUtils.GetContinuityLevel(vecsA, vecsB, _distTol, _g1AngleTolDeg, _g2PlusAngleTolDeg, _vectMagTolPct);
             int cCont = ContinuityUtils.GetParametricContinuity(ncA, evalTA, sideA, ncB, evalTB, sideB);
+            bool isGInf = ContinuityUtils.IsGInfinity(ncA, evalTA, sideA, ncB, evalTB, sideB, _g1AngleTolDeg);
 
-            if (gCont == 3 && cCont > gCont)
-            {
-                gCont = cCont;
-            }
-
-            if (_echo) PrintReport(vecsA, vecsB, dA, dB, gCont, cCont, doc);
+            if (_echo) PrintReport(vecsA, vecsB, dA, dB, gCont, cCont, isGInf, doc);
 
             if (_addDot && gCont.HasValue)
             {
-                string gStr = gCont == int.MaxValue ? "∞" : gCont.ToString();
+                string gStr = isGInf ? "G∞" : ContinuityUtils.FormatContinuityString(gCont);
                 string cStr = cCont == int.MaxValue ? "∞" : cCont.ToString();
-                string dotText = _showCCont ? $"G{gStr}/C{cStr}" : $"G{gStr}";
+                string dotText = _showCCont ? $"{gStr}/C{cStr}" : gStr;
                 
                 TextDot dot = new TextDot(dotText, vecsA.Pt) { FontHeight = 11 };
                 doc.Objects.AddTextDot(dot);
@@ -204,52 +201,11 @@ namespace CADacombs.Commands.Analysis.Curves
             return Result.Success;
         }
 
-        private int? GetContinuityG(
-            (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) vA, 
-            (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) vB)
-        {
-            if (vA.Pt.DistanceTo(vB.Pt) > _distTol) return null; // Not G0
-            
-            if (vA.Tangent.IsTiny() || vB.Tangent.IsTiny()) return null; // Stacked points
-
-            double angleTan = RhinoMath.ToDegrees(Vector3d.VectorAngle(vA.Tangent, vB.Tangent));
-            if (angleTan > _g1AngleTolDeg) return 0; // Not G1
-
-            if (vA.Curvature.IsTiny() && vB.Curvature.IsTiny())
-            {
-                if (vA.Torsion.IsTiny() && vB.Torsion.IsTiny()) return 3;
-                return 2;
-            }
-
-            if (vA.Curvature.IsTiny() || vB.Curvature.IsTiny()) return 1; // Not G2
-
-            double angleCrv = RhinoMath.ToDegrees(Vector3d.VectorAngle(vA.Curvature, vB.Curvature));
-            if (angleCrv > _g2PlusAngleTolDeg) return 1; // Not G2
-
-            // G2 Relative Magnitude Check
-            double kA = vA.Curvature.Length;
-            double kB = vB.Curvature.Length;
-            if (Math.Abs(kA - kB) / Math.Max(kA, kB) > (_vectMagTolPct / 100.0)) return 1; // Not G2
-
-            if (vA.Torsion.IsTiny() && vB.Torsion.IsTiny()) return 3;
-            if (vA.Torsion.IsTiny() || vB.Torsion.IsTiny()) return 2; // Not G3
-
-            double angleTors = RhinoMath.ToDegrees(Vector3d.VectorAngle(vA.Torsion, vB.Torsion));
-            if (angleTors > _g2PlusAngleTolDeg) return 2; // Not G3
-
-            // G3 Relative Magnitude Check
-            double tA = vA.Torsion.Length;
-            double tB = vB.Torsion.Length;
-            if (Math.Abs(tA - tB) / Math.Max(tA, tB) > (_vectMagTolPct / 100.0)) return 2; // Not G3
-
-            return 3; 
-        }
-
         private void PrintReport(
             (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) vA, 
             (Point3d Pt, Vector3d Tangent, Vector3d Curvature, Vector3d Torsion) vB,
             Vector3d[] dA, Vector3d[] dB,
-            int? gCont, int cCont, RhinoDoc doc)
+            int? gCont, int cCont, bool isGInf, RhinoDoc doc)
         {
             StringBuilder sb = new StringBuilder();
             double zeroTol = 1e-9;
@@ -324,16 +280,16 @@ namespace CADacombs.Commands.Analysis.Curves
             }
             else
             {
-                string gStr = gCont == int.MaxValue ? "∞" : gCont.ToString();
+                string gStr = isGInf ? "G∞" : ContinuityUtils.FormatContinuityString(gCont);
                 
                 if (_showCCont)
                 {
                     string cStr = cCont == int.MaxValue ? "∞" : cCont.ToString();
-                    sb.AppendLine($"Continuities at curves' ends are G{gStr} and C{cStr}.");
+                    sb.AppendLine($"Continuities at curves' ends are {gStr} and C{cStr}.");
                 }
                 else
                 {
-                    sb.AppendLine($"Continuities at curves' ends are G{gStr}.");
+                    sb.AppendLine($"Continuities at curves' ends are {gStr}.");
                 }
             }
 
@@ -347,7 +303,8 @@ namespace CADacombs.Commands.Analysis.Curves
 
         protected override void DrawForeground(Rhino.Display.DrawEventArgs e)
         {
-            e.Display.DrawPoint(PtA, Rhino.Display.PointStyle.X, 6, System.Drawing.Color.Red);
+            System.Drawing.Color feedbackColor = Rhino.ApplicationSettings.AppearanceSettings.FeedbackColor;
+            e.Display.DrawPoint(PtA, Rhino.Display.PointStyle.X, 6, feedbackColor);
         }
     }
 }

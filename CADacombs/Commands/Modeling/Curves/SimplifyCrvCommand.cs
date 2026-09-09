@@ -13,7 +13,9 @@ namespace CADacombs.Commands.Modeling.Curves
     {
         public SimplifyCrvCommand() { Instance = this; }
         public static SimplifyCrvCommand Instance { get; private set; }
-        public override string EnglishName => "spb_SimplifyCrv";
+        
+        // Updated prefix
+        public override string EnglishName => "ccSimplifyCrv";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
@@ -50,7 +52,6 @@ namespace CADacombs.Commands.Modeling.Curves
             conduit.Enabled = false;
             doc.Views.Redraw();
 
-            // FIX: Cancel if no options are checked, user clicked Cancel, OR if all deltas are 0
             if (!dialog.Result || !dialog.AnyOptionChecked || !dialog.HasChanges || dialog.ResultCurves == null)
             {
                 return Result.Cancel;

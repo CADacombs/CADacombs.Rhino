@@ -18,7 +18,7 @@ namespace CADacombs.Commands.Modeling
 
         public static MatchSrfCommand Instance { get; private set; }
 
-        public override string EnglishName => "spb_MatchSrf";
+        public override string EnglishName => "ccMatchSrf";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
