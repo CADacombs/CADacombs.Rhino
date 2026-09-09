@@ -6,26 +6,39 @@ namespace CADacombs.Commands.Modeling.Curves
 {
     public static class PolylineOutputLogic
     {
+        private static bool TryExtract(Curve c, bool strict, out Polyline pl)
+        {
+            pl = null;
+            // If strict is true, reject anything that isn't explicitly a Line or Polyline
+            if (strict && !(c is LineCurve || c is PolylineCurve)) return false;
+            
+            return c.TryGetPolyline(out pl);
+        }
+
         /// <summary>
         /// Scans a curve for contiguous linear segments and merges them into PolylineCurves.
         /// Safely handles closed curves to prevent breaking polyline chains at the seam.
         /// </summary>
-        public static Curve Execute(Curve inputCurve)
+        public static Curve Execute(Curve inputCurve, bool strictLineSegmentsOnly = false)
         {
             if (inputCurve == null) return null;
 
             // If it's not a PolyCurve, check if it's already a single polyline representation
             if (!(inputCurve is PolyCurve pc))
             {
-                if (!(inputCurve is PolylineCurve) && !(inputCurve is LineCurve) && inputCurve.TryGetPolyline(out Polyline pl))
+                if (TryExtract(inputCurve, strictLineSegmentsOnly, out Polyline pl))
+                {
+                    if (pl.Count == 2) return new LineCurve(pl[0], pl[1]);
                     return new PolylineCurve(pl);
+                }
                 
                 return inputCurve;
             }
 
             // If the entire PolyCurve is just one continuous polyline, simplify it immediately
-            if (pc.TryGetPolyline(out Polyline fullPl))
+            if (TryExtract(pc, strictLineSegmentsOnly, out Polyline fullPl))
             {
+                if (fullPl.Count == 2) return new LineCurve(fullPl[0], fullPl[1]);
                 return new PolylineCurve(fullPl);
             }
 
@@ -36,7 +49,7 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 for (int i = 0; i < pc.SegmentCount; i++)
                 {
-                    if (!pc.SegmentCurve(i).TryGetPolyline(out _))
+                    if (!TryExtract(pc.SegmentCurve(i), strictLineSegmentsOnly, out _))
                     {
                         startIdx = i;
                         break;
@@ -52,7 +65,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 int idx = (startIdx + count) % pc.SegmentCount;
                 Curve seg = pc.SegmentCurve(idx);
 
-                if (seg.TryGetPolyline(out Polyline pl))
+                if (TryExtract(seg, strictLineSegmentsOnly, out Polyline pl))
                 {
                     if (currentPoints.Count == 0)
                     {
@@ -69,8 +82,13 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
                 else
                 {
-                    // Flush accumulated points to a single PolylineCurve
-                    if (currentPoints.Count > 1)
+                    // Flush accumulated points
+                    if (currentPoints.Count == 2)
+                    {
+                        newSegments.Add(new LineCurve(currentPoints[0], currentPoints[1]));
+                        currentPoints.Clear();
+                    }
+                    else if (currentPoints.Count > 2)
                     {
                         newSegments.Add(new PolylineCurve(currentPoints));
                         currentPoints.Clear();
@@ -82,7 +100,11 @@ namespace CADacombs.Commands.Modeling.Curves
             }
 
             // Flush any remaining points (happens if the curve is open and ends on a linear segment)
-            if (currentPoints.Count > 1)
+            if (currentPoints.Count == 2)
+            {
+                newSegments.Add(new LineCurve(currentPoints[0], currentPoints[1]));
+            }
+            else if (currentPoints.Count > 2)
             {
                 newSegments.Add(new PolylineCurve(currentPoints));
             }

@@ -6,6 +6,7 @@ using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.Input.Custom;
 using CADacombs.Core.Curves;
+using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Analysis.Curves
 {
@@ -15,21 +16,98 @@ namespace CADacombs.Commands.Analysis.Curves
         public static FindCurveDiscontinuitiesCommand Instance { get; private set; }
         public override string EnglishName => "spb_CrvDiscontinuities";
 
+        // Sticky Options
+        private int _evalG = 2; // 1 for G1, 2 for G2, 3 for G3
+        private double _g1AngleTolDeg = RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
+        private double _g2PlusAngleTolDeg = 2.0;
+        private double _vectMagTolPct = 5.0;
+        private bool _addPts = true;
+        private bool _splitCurve = false;
+        private bool _echo = true;
+        private bool _debug = false;
+
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             var go = new GetObject();
             go.SetCommandPrompt("Select curves to find discontinuities");
             go.GeometryFilter = ObjectType.Curve;
-            go.GetMultiple(1, 0);
+            go.AcceptNumber(true, true); // Allow numeric input for G-level
+            go.DeselectAllBeforePostSelect = false;
+            go.EnableClearObjectsOnEntry(false);
+            go.EnableUnselectObjectsOnExit(false);
 
-            if (go.CommandResult() != Result.Success) return go.CommandResult();
+            OptionDouble optValG1Ang = new OptionDouble(_g1AngleTolDeg);
+            OptionDouble optValG2Ang = new OptionDouble(_g2PlusAngleTolDeg);
+            OptionDouble optValMagPct = new OptionDouble(_vectMagTolPct);
+            OptionToggle optValAddPts = new OptionToggle(_addPts, "No", "Yes");
+            OptionToggle optValSplit = new OptionToggle(_splitCurve, "No", "Yes");
+            OptionToggle optValEcho = new OptionToggle(_echo, "No", "Yes");
+            OptionToggle optValDebug = new OptionToggle(_debug, "No", "Yes");
 
-            double angleTolG1 = doc.ModelAngleToleranceRadians;
-            double angleTolG2 = RhinoMath.ToRadians(2.0);
-            double crvDeltaPercent = 0.05; 
+            string[] gList = { "1", "2", "3" };
+            bool bPreselectedObjsChecked = false;
 
-            List<Curve> newSplitCurves = new List<Curve>();
+            while (true)
+            {
+                go.ClearCommandOptions();
+                
+                int optG = go.AddOptionList("G", gList, _evalG - 1);
+                int optG1 = go.AddOptionDouble("G1AngleTol", ref optValG1Ang);
+                
+                int optG2 = -1, optMag = -1;
+                if (_evalG >= 2)
+                {
+                    optG2 = go.AddOptionDouble("G2PlusAngleTol", ref optValG2Ang);
+                    optMag = go.AddOptionDouble("VectMagTolPct", ref optValMagPct);
+                }
+
+                int optAdd = go.AddOptionToggle("AddPts", ref optValAddPts);
+                int optSplit = go.AddOptionToggle("SplitCurve", ref optValSplit);
+                int optEcho = go.AddOptionToggle("Echo", ref optValEcho);
+                int optDebug = go.AddOptionToggle("Debug", ref optValDebug);
+
+                var res = go.GetMultiple(1, 0);
+
+                if (!bPreselectedObjsChecked && go.ObjectsWerePreselected)
+                {
+                    bPreselectedObjsChecked = true;
+                    go.EnablePreSelect(false, true);
+                    continue;
+                }
+
+                if (res == Rhino.Input.GetResult.Cancel) return Result.Cancel;
+                if (res == Rhino.Input.GetResult.Object) break;
+
+                if (res == Rhino.Input.GetResult.Number)
+                {
+                    int val = (int)go.Number();
+                    if (val >= 1 && val <= 3) _evalG = val;
+                    else RhinoApp.WriteLine("Numeric input must be 1, 2, or 3.");
+                    continue;
+                }
+
+                if (res == Rhino.Input.GetResult.Option)
+                {
+                    var opt = go.Option();
+                    if (opt.Index == optG) _evalG = opt.CurrentListOptionIndex + 1;
+                    else if (opt.Index == optG1) _g1AngleTolDeg = optValG1Ang.CurrentValue;
+                    else if (_evalG >= 2 && opt.Index == optG2) _g2PlusAngleTolDeg = optValG2Ang.CurrentValue;
+                    else if (_evalG >= 2 && opt.Index == optMag) _vectMagTolPct = optValMagPct.CurrentValue;
+                    else if (opt.Index == optAdd) _addPts = optValAddPts.CurrentValue;
+                    else if (opt.Index == optSplit) _splitCurve = optValSplit.CurrentValue;
+                    else if (opt.Index == optEcho) _echo = optValEcho.CurrentValue;
+                    else if (opt.Index == optDebug) _debug = optValDebug.CurrentValue;
+                }
+            }
+
+            double g1AngleTolRad = RhinoMath.ToRadians(_g1AngleTolDeg);
+            double g2PlusAngleTolRad = RhinoMath.ToRadians(_g2PlusAngleTolDeg);
+            double crvDeltaDec = _vectMagTolPct / 100.0;
+
+            // FIX: Changed from List<Curve> to List<Guid> to store the document object IDs
+            List<Guid> splitOutputs = new List<Guid>();
             int totalDiscontinuities = 0;
+            int splitCurveCount = 0;
 
             foreach (var objRef in go.Objects())
             {
@@ -38,51 +116,153 @@ namespace CADacombs.Commands.Analysis.Curves
 
                 NurbsCurve nc = crv.ToNurbsCurve();
                 List<double> splitParams = new List<double>();
+                bool g3DiscontinuousFound = false;
 
-                // Simplified evaluation loop across interior knots
-                for (int i = nc.Degree; i < nc.Knots.Count - nc.Degree; i++)
+                int iK = (nc.IsClosed && !nc.IsPeriodic) ? 0 : nc.Degree;
+                int iK_Stop = nc.Knots.Count - nc.Degree;
+
+                while (iK < iK_Stop)
                 {
-                    double t = nc.Knots[i];
-                    var vecsB = ContinuityUtils.GetContinuityVectorsAt(nc, t, CurveEvaluationSide.Below);
-                    var vecsA = ContinuityUtils.GetContinuityVectorsAt(nc, t, CurveEvaluationSide.Above);
+                    int m = nc.Knots.KnotMultiplicity(iK);
 
-                    // Check G1
-                    if (Vector3d.VectorAngle(vecsB.Tangent, vecsA.Tangent) > angleTolG1)
+                    if (m <= nc.Degree - 3)
                     {
-                        splitParams.Add(t);
+                        iK += m;
                         continue;
                     }
 
-                    // Check G2 (if not linear)
-                    if (!vecsB.Curvature.IsTiny() && !vecsA.Curvature.IsTiny())
+                    double tEval = nc.Knots[iK];
+                    
+                    var vecsB = (iK == 0) ? 
+                        ContinuityUtils.GetContinuityVectorsAt(nc, nc.Knots[nc.Knots.Count - 1], CurveEvaluationSide.Below) :
+                        ContinuityUtils.GetContinuityVectorsAt(nc, tEval, CurveEvaluationSide.Below);
+                        
+                    var vecsA = ContinuityUtils.GetContinuityVectorsAt(nc, tEval, CurveEvaluationSide.Above);
+
+                    // --- G1 CHECK ---
+                    if (m > nc.Degree - 1)
                     {
-                        if (Vector3d.VectorAngle(vecsB.Curvature, vecsA.Curvature) > angleTolG2)
+                        double angleTan = Vector3d.VectorAngle(vecsB.Tangent, vecsA.Tangent);
+                        if (angleTan > g1AngleTolRad)
                         {
-                            splitParams.Add(t);
+                            splitParams.Add(tEval);
+                            iK += m;
+                            continue;
+                        }
+                    }
+
+                    if (_evalG < 2) 
+                    {
+                        iK += m;
+                        continue;
+                    }
+
+                    // --- G2 CHECK ---
+                    if (m > nc.Degree - 2)
+                    {
+                        if (!(vecsB.Curvature.IsTiny() && vecsA.Curvature.IsTiny()))
+                        {
+                            double angleCrv = Vector3d.VectorAngle(vecsB.Curvature, vecsA.Curvature);
+                            if (angleCrv > g2PlusAngleTolRad)
+                            {
+                                splitParams.Add(tEval);
+                                iK += m;
+                                continue;
+                            }
+                            
+                            double kBelow = vecsB.Curvature.Length;
+                            double kAbove = vecsA.Curvature.Length;
+                            if (Math.Abs(kBelow - kAbove) / Math.Max(kBelow, kAbove) > crvDeltaDec)
+                            {
+                                splitParams.Add(tEval);
+                                iK += m;
+                                continue;
+                            }
+                        }
+                    }
+
+                    if (_evalG < 3)
+                    {
+                        iK += m;
+                        continue;
+                    }
+
+                    // --- G3 CHECK ---
+                    if (!g3DiscontinuousFound)
+                    {
+                        double angleTors = Vector3d.VectorAngle(vecsB.Torsion, vecsA.Torsion);
+                        if (angleTors > g2PlusAngleTolRad)
+                        {
+                            g3DiscontinuousFound = true;
+                            if (_debug) RhinoApp.WriteLine($"Not G3 at {tEval} per G3 angle diff of {RhinoMath.ToDegrees(angleTors):F2} degrees.");
+                            splitParams.Add(tEval);
+                            iK += m;
                             continue;
                         }
 
-                        double kBelow = vecsB.Curvature.Length;
-                        double kAbove = vecsA.Curvature.Length;
-                        if (Math.Abs(kBelow - kAbove) / Math.Max(kBelow, kAbove) > crvDeltaPercent)
+                        double tBelow = vecsB.Torsion.Length;
+                        double tAbove = vecsA.Torsion.Length;
+                        if (Math.Abs(tBelow - tAbove) / Math.Max(tBelow, tAbove) > crvDeltaDec)
                         {
-                            splitParams.Add(t);
+                            g3DiscontinuousFound = true;
+                            if (_debug) RhinoApp.WriteLine($"Not G3 at {tEval} per G3 magnitude diff.");
+                            splitParams.Add(tEval);
+                            iK += m;
+                            continue;
                         }
                     }
+
+                    iK += m;
                 }
-
-                totalDiscontinuities += splitParams.Count;
-
-                foreach(double t in splitParams) doc.Objects.AddPoint(nc.PointAt(t));
 
                 if (splitParams.Count > 0)
                 {
-                    Curve[] split = nc.Split(splitParams);
-                    if (split != null) newSplitCurves.AddRange(split);
+                    totalDiscontinuities += splitParams.Count;
+
+                    if (_addPts)
+                    {
+                        foreach (double t in splitParams) doc.Objects.AddPoint(nc.PointAt(t));
+                    }
+
+                    if (_splitCurve)
+                    {
+                        Curve[] split = nc.Split(splitParams);
+                        if (split != null && split.Length > 0)
+                        {
+                            splitCurveCount++;
+                            foreach (var s in split)
+                            {
+                                // FIX: Adding the returned Guid to our output list
+                                Guid id = doc.Objects.AddCurve(s, objRef.Object().Attributes);
+                                if (id != Guid.Empty) splitOutputs.Add(id);
+                            }
+                            doc.Objects.Delete(objRef.ObjectId, true);
+                        }
+                    }
                 }
             }
 
-            RhinoApp.WriteLine($"Found {totalDiscontinuities} discontinuities.");
+            if (_echo)
+            {
+                if (totalDiscontinuities > 0)
+                {
+                    string msg = $"Found {totalDiscontinuities} G{_evalG} discontinuities.";
+                    if (_splitCurve) msg += $" Input was split into {splitOutputs.Count} curves.";
+                    RhinoApp.WriteLine(msg);
+                }
+                else
+                {
+                    RhinoApp.WriteLine($"No G{_evalG} discontinuities found.");
+                }
+            }
+
+            if (_splitCurve && splitOutputs.Count > 0)
+            {
+                doc.Objects.UnselectAll();
+                // FIX: Select using the Guid
+                foreach (Guid id in splitOutputs) doc.Objects.Select(id); 
+            }
+
             doc.Views.Redraw();
             return Result.Success;
         }

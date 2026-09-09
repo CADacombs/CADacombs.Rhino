@@ -58,18 +58,108 @@ namespace CADacombs.Commands.Modeling.Curves
                             Point3d pt = segAbove.PointAtStart;
                             string label = ContinuityUtils.GetSpbContinuityBetweenSegments(segBelow, segAbove);
                             
+                            // Append the "+" for G2 limits
+                            if (label == "G2") label = "G2+";
+                            
                             Color color = Color.Red; 
-                            if (label == "G2") color = Color.LimeGreen;
+                            if (label == "G2+") color = Color.LimeGreen;
                             else if (label == "G1") color = Color.Gold;
 
                             e.Display.DrawDot(pt, label, color, Color.Black);
                         }
                     }
 
-                    // 2. FIX: Draw explicit G0 dots at internal vertices of Polylines
+                    // 2. Draw explicit G0 dots at internal vertices of Polylines
                     DrawInternalPolylineG0Dots(e, previewCurve);
+                    
+                    // 3. Draw dots at interior knots of raw NURBS curves
+                    DrawNurbsInteriorContinuity(e, previewCurve);
+
+                    // 4. Draw the Seam dot for ALL closed curves
+                    if (previewCurve.IsClosed)
+                    {
+                        DrawClosedSeam(e, previewCurve);
+                    }
                 }
             }
+        }
+
+        private void DrawNurbsInteriorContinuity(DrawEventArgs e, Curve curve)
+        {
+            if (curve == null || curve is PolylineCurve) return;
+
+            // If it's a PolyCurve, dig inside and evaluate its individual segments
+            if (curve is PolyCurve pc)
+            {
+                for (int i = 0; i < pc.SegmentCount; i++)
+                {
+                    DrawNurbsInteriorContinuity(e, pc.SegmentCurve(i));
+                }
+                return;
+            }
+
+            double[] spans = curve.SpanVector();
+            if (spans == null || spans.Length <= 2) return; 
+
+            for (int i = 1; i < spans.Length - 1; i++)
+            {
+                double t = spans[i];
+                string label = ContinuityUtils.GetSpbContinuity(curve, t);
+                
+                // Append the "+" for G2 limits
+                if (label == "G2") label = "G2+";
+                
+                Color color = Color.Red; 
+                if (label == "G2+") color = Color.LimeGreen;
+                else if (label == "G1") color = Color.Gold;
+
+                e.Display.DrawDot(curve.PointAt(t), label, color, Color.Black);
+            }
+
+        }
+
+        private void DrawClosedSeam(DrawEventArgs e, Curve curve)
+        {
+            string label = "G0"; 
+            Color color = Color.Red;
+
+            if (curve is PolylineCurve)
+            {
+                label = "G0";
+            }
+            else if (curve is PolyCurve pc && pc.SegmentCount > 1)
+            {
+                label = ContinuityUtils.GetSpbContinuityBetweenSegments(pc.SegmentCurve(pc.SegmentCount - 1), pc.SegmentCurve(0));
+                if (label == "G2") label = "G2+";
+            }
+            else
+            {
+                // Manually evaluate the start and end vectors to avoid Rhino's IsContinuous seam quirks
+                Vector3d tStart = curve.TangentAt(curve.Domain.Min);
+                Vector3d tEnd = curve.TangentAt(curve.Domain.Max);
+                
+                double angleTol = Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceRadians;
+                
+                // 1 = parallel (same direction), -1 = anti-parallel, 0 = not parallel
+                if (tStart.IsParallelTo(tEnd, angleTol) == 1) 
+                {
+                    Vector3d kStart = curve.CurvatureAt(curve.Domain.Min);
+                    Vector3d kEnd = curve.CurvatureAt(curve.Domain.Max);
+                    
+                    if (kStart.EpsilonEquals(kEnd, 1e-5)) label = "G2+";
+                    else label = "G1";
+                }
+                else
+                {
+                    label = "G0";
+                }
+            }
+
+            if (label == "G-inf" || label == "G3") color = Color.Cyan;
+            else if (label == "G2+") color = Color.LimeGreen;
+            else if (label == "G1") color = Color.Gold;
+
+            e.Display.DrawDot(curve.PointAtStart, label, color, Color.Black);
         }
 
         private void DrawInternalPolylineG0Dots(DrawEventArgs e, Curve curve)

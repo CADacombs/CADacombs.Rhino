@@ -10,7 +10,7 @@ namespace CADacombs.Core
     /// The base Eto Dialog for the EndBulge tool suite. 
     /// Handles the complex UI layout, homemade steppers, and state synchronization.
     /// </summary>
-    public class EndBulgeDialog : Dialog<bool>
+    public class EndBulgeDialog : CADacombsDialogBase
     {
         // ----------------------------------------------------
         // Control Dictionaries
@@ -65,8 +65,6 @@ namespace CADacombs.Core
 
             holdTimer = new UITimer { Interval = 0.15 };
             holdTimer.Elapsed += OnHoldTimerElapsed;
-
-            Closed += OnFormClosed;
         }
 
         // ----------------------------------------------------
@@ -582,17 +580,8 @@ namespace CADacombs.Core
             catch { return null; }
         }
 
-        protected override void OnLoadComplete(EventArgs e)
-        {
-            base.OnLoadComplete(e);
-            
-            if (EndBulgeOptions.WindowLocation.HasValue && 
-                EndBulgeOptions.WindowLocation.Value.X > 0 && 
-                EndBulgeOptions.WindowLocation.Value.Y > 0)
-            {
-                this.Location = EndBulgeOptions.WindowLocation.Value;
-            }
-        }
+        protected override Point? LoadSavedLocation() => EndBulgeOptions.WindowLocation;
+        protected override void SaveCurrentLocation(Point location) => EndBulgeOptions.WindowLocation = location;
 
         protected void SaveSettings()
         {
@@ -645,14 +634,6 @@ namespace CADacombs.Core
         {
             SaveSettings();
             RhinoApp.WriteLine("Settings saved as default.");
-        }
-
-        protected virtual void OnFormClosed(object sender, EventArgs e)
-        {
-            // Update the global options with the final location before destruction
-            EndBulgeOptions.WindowLocation = this.Location;
-
-            // Core cleanup handled in commands
         }
     }
 }

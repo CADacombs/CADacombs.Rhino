@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" />
+    <PackageReference Include="RhinoCommon" Version="8.13.*" />
     <PackageReference Include="Eto.Forms" Version="2.7.0" />
   </ItemGroup>
 

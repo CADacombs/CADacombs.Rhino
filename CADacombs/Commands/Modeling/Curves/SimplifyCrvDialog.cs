@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino.Geometry;
+using CADacombs.Core; // Required for CADacombsDialogBase
 
 namespace CADacombs.Commands.Modeling.Curves
 {
-    public class SimplifyCrvDialog : Dialog<bool>
+    public class SimplifyCrvDialog : CADacombsDialogBase
     {
         private List<Curve> _inputCurves;
         private SimplifyCrvConduit _conduit;
@@ -14,6 +15,9 @@ namespace CADacombs.Commands.Modeling.Curves
         private CheckBox _chkSpansToLines;
         private CheckBox _chkSpansToArcs;
         private CheckBox _chkPolylineOutput;
+        private CheckBox _chkSplitAllKnots;
+        private CheckBox _chkSplitFullyMultiple;
+        private CheckBox _chkAdjustG1;
         
         private Label _lblProcessedCount;
         private Panel _reportPanel;
@@ -26,7 +30,6 @@ namespace CADacombs.Commands.Modeling.Curves
         public List<Curve> ResultCurves { get; private set; }
         public bool AnyOptionChecked => _chkSpansToLines.Checked == true || _chkSpansToArcs.Checked == true || _chkPolylineOutput.Checked == true;
         
-        // Expose this to the Command so it knows whether to skip replacing geometry
         public bool HasChanges { get; private set; } 
 
         public SimplifyCrvDialog(List<Curve> inputCurves, SimplifyCrvConduit conduit)
@@ -40,8 +43,6 @@ namespace CADacombs.Commands.Modeling.Curves
 
             Title = "CADacombs SimplifyCrv";
             Resizable = false;
-            
-            // FIX: Removed height constraint and enabled AutoSize so the window wraps the table dynamically
             MinimumSize = new Size(380, 0); 
             AutoSize = true;
             Padding = new Padding(12);
@@ -52,15 +53,40 @@ namespace CADacombs.Commands.Modeling.Curves
             if (!_isComplex) UpdatePreview();
         }
 
+        // --- DialogBase Implementations ---
+        protected override Eto.Drawing.Point? LoadSavedLocation() => SimplifyCrvOptions.WindowLocation;
+        protected override void SaveCurrentLocation(Eto.Drawing.Point location) => SimplifyCrvOptions.WindowLocation = location;
+
         private void CreateControls()
         {
-            _chkSpansToLines = new CheckBox { Text = "Convert Spans to Lines", Checked = true };
-            _chkSpansToArcs = new CheckBox { Text = "Convert Spans to Arcs", Checked = true };
-            _chkPolylineOutput = new CheckBox { Text = "Polyline output", Checked = true };
+            _chkSpansToLines = new CheckBox { Text = "Convert spans to lines", Checked = SimplifyCrvOptions.ConvertLines };
+            _chkSpansToArcs = new CheckBox { Text = "Convert spans to arcs", Checked = SimplifyCrvOptions.ConvertArcs };
+            
+            _chkPolylineOutput = new CheckBox 
+            { 
+                Text = "Merge contiguous lines to polylines", 
+                Checked = SimplifyCrvOptions.MergePolylines,
+                ToolTip = "Groups contiguous line segments into single Polyline objects. Requires 'Convert spans to lines' to process linear NURBS spans."
+            };
+            _chkSplitAllKnots = new CheckBox { Text = "Split at all multiple knots", Checked = SimplifyCrvOptions.SplitAllKnots };
+            _chkSplitFullyMultiple = new CheckBox { Text = "Split at fully multiple knots", Checked = SimplifyCrvOptions.SplitFullyMultiple };
+            _chkAdjustG1 = new CheckBox { Text = "Adjust G1", Checked = SimplifyCrvOptions.AdjustG1 };
 
+            // Manage the disabled state initially
+            if (_chkSplitAllKnots.Checked == true) _chkSplitFullyMultiple.Enabled = false;
+
+            // Event Listeners
             _chkSpansToLines.CheckedChanged += OnOptionChanged;
             _chkSpansToArcs.CheckedChanged += OnOptionChanged;
             _chkPolylineOutput.CheckedChanged += OnOptionChanged;
+            _chkAdjustG1.CheckedChanged += OnOptionChanged;
+            _chkSplitFullyMultiple.CheckedChanged += OnOptionChanged;
+
+            _chkSplitAllKnots.CheckedChanged += (s, e) =>
+            {
+                _chkSplitFullyMultiple.Enabled = !(_chkSplitAllKnots.Checked ?? false);
+                OnOptionChanged(s, e);
+            };
 
             _lblProcessedCount = new Label { Text = "Processed 0 curve(s)." };
             _reportPanel = new Panel();
@@ -83,7 +109,14 @@ namespace CADacombs.Commands.Modeling.Curves
             var optionsStack = new StackLayout
             {
                 Spacing = 5,
-                Items = { _chkSpansToLines, _chkSpansToArcs, _chkPolylineOutput }
+                Items = { 
+                    _chkSpansToLines, 
+                    _chkSpansToArcs, 
+                    _chkSplitAllKnots, 
+                    _chkSplitFullyMultiple, 
+                    _chkAdjustG1,
+                    _chkPolylineOutput // Moved to the very bottom
+                }
             };
 
             var buttonStack = new StackLayout
@@ -99,11 +132,22 @@ namespace CADacombs.Commands.Modeling.Curves
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             layout.AddRow(_lblProcessedCount);
             layout.AddRow(_reportPanel);
-            
-            // FIX: Removed the vertical null spacer so the layout shrinks tight to the buttons
             layout.AddRow(buttonStack); 
 
             Content = layout;
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            // Save states regardless of OK or Cancel
+            SimplifyCrvOptions.ConvertLines = _chkSpansToLines.Checked ?? false;
+            SimplifyCrvOptions.ConvertArcs = _chkSpansToArcs.Checked ?? false;
+            SimplifyCrvOptions.MergePolylines = _chkPolylineOutput.Checked ?? false;
+            SimplifyCrvOptions.SplitAllKnots = _chkSplitAllKnots.Checked ?? false;
+            SimplifyCrvOptions.SplitFullyMultiple = _chkSplitFullyMultiple.Checked ?? false;
+            SimplifyCrvOptions.AdjustG1 = _chkAdjustG1.Checked ?? false;
+            
+            base.OnClosed(e); // Saves the window location via CADacombsDialogBase
         }
 
         private void OnOptionChanged(object sender, EventArgs e)
@@ -112,7 +156,6 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 _lblProcessedCount.Text = "Options changed. Click Preview to update.";
                 _reportPanel.Content = null;
-                // Force window to resize tight when report panel is cleared
                 if (ParentWindow != null) this.Size = new Size(this.Width, -1);
             }
             else UpdatePreview();
@@ -139,13 +182,16 @@ namespace CADacombs.Commands.Modeling.Curves
                         inputCurve, distTol, angleTol,
                         _chkSpansToLines.Checked ?? false, 
                         _chkSpansToArcs.Checked ?? false,
-                        _chkPolylineOutput.Checked ?? false);
+                        _chkPolylineOutput.Checked ?? false,
+                        _chkSplitAllKnots.Checked ?? false, 
+                        _chkSplitFullyMultiple.Checked ?? false, 
+                        _chkAdjustG1.Checked ?? false
+                        );
 
                     ResultCurves.Add(result.ResultCurve);
                 }
             }
 
-            // Calculate stats and evaluate HasChanges flag
             var inStats = CurveStats.Analyze(_inputCurves);
             var outStats = CurveStats.Analyze(ResultCurves);
             HasChanges = inStats.HasDifferences(outStats);
@@ -153,7 +199,6 @@ namespace CADacombs.Commands.Modeling.Curves
             _lblProcessedCount.Text = $"Processed {_inputCurves.Count} curve(s).";
             BuildReportTable(inStats, outStats);
 
-            // Tell Eto to recalculate its dimensions based on the new table content
             if (ParentWindow != null) this.Size = new Size(this.Width, -1);
 
             _conduit.PreviewCurves = ResultCurves;
@@ -174,14 +219,23 @@ namespace CADacombs.Commands.Modeling.Curves
                 new Label { Text = "Delta", Font = boldFont }
             ));
 
-            void AddRow(string name, int init, int final, bool isIndent1 = false, bool isIndent2 = false)
+            void AddRow(string name, int init, int final, int indentLevel = 0, bool isHeader = false)
             {
-                if (init == 0 && final == 0) return;
+                if (init == 0 && final == 0 && !isHeader) return;
 
-                string prefix = isIndent2 ? "      " : (isIndent1 ? "   " : "");
+                string prefix = new string(' ', indentLevel * 3);
                 int delta = final - init;
                 string deltaStr = delta > 0 ? $"+{delta}" : (delta < 0 ? $"{delta}" : " 0");
                 
+                if (isHeader)
+                {
+                    table.Rows.Add(new TableRow(
+                        new Label { Text = name, Font = boldFont },
+                        new Label { Text = "" }, new Label { Text = "" }, new Label { Text = "" }
+                    ));
+                    return;
+                }
+
                 table.Rows.Add(new TableRow(
                     new Label { Text = prefix + name, Font = regFont },
                     new Label { Text = init.ToString(), Font = regFont },
@@ -190,25 +244,30 @@ namespace CADacombs.Commands.Modeling.Curves
                 ));
             }
 
-            AddRow("Lines", inStats.TopLines, outStats.TopLines);
-            AddRow("Polylines", inStats.TopPolylines, outStats.TopPolylines);
-            AddRow("Segments", inStats.TopPolylineSegments, outStats.TopPolylineSegments, true);
-            AddRow("Arcs", inStats.TopArcs, outStats.TopArcs);
-            AddRow("NURBS", inStats.TopNurbs, outStats.TopNurbs);
+            AddRow("Top-level objects", 0, 0, 0, true);
+            AddRow("Lines", inStats.TopLines, outStats.TopLines, 1);
+            AddRow("Polylines", inStats.TopPolylines, outStats.TopPolylines, 1);
+            AddRow("Segments", inStats.TopPolylineSegments, outStats.TopPolylineSegments, 2);
+            AddRow("Arcs", inStats.TopArcs, outStats.TopArcs, 1);
+            AddRow("NURBS curves", inStats.TopNurbs, outStats.TopNurbs, 1);
+            AddRow("Polycurves", inStats.TopPolyCurves, outStats.TopPolyCurves, 1);
             
-            // FIX: Match Rhino terminology
-            AddRow("Polycurves", inStats.TopPolyCurves, outStats.TopPolyCurves); 
-            AddRow("Segment count", inStats.PcSgTotal, outStats.PcSgTotal, true);
-            AddRow("Lines", inStats.PcSgLines, outStats.PcSgLines, true);
-            AddRow("Polylines", inStats.PcSgPolylines, outStats.PcSgPolylines, true);
-            AddRow("Segments", inStats.PcSgPolylineSegments, outStats.PcSgPolylineSegments, false, true);
-            AddRow("Arcs", inStats.PcSgArcs, outStats.PcSgArcs, true);
-            AddRow("NURBS", inStats.PcSgNurbs, outStats.PcSgNurbs, true);
+            if (inStats.PcSgTotal > 0 || outStats.PcSgTotal > 0)
+            {
+                AddRow("Polycurve segments", 0, 0, 0, true);
+                AddRow("Total segments", inStats.PcSgTotal, outStats.PcSgTotal, 1);
+                AddRow("Lines", inStats.PcSgLines, outStats.PcSgLines, 1);
+                AddRow("Polylines", inStats.PcSgPolylines, outStats.PcSgPolylines, 1);
+                AddRow("Segments", inStats.PcSgPolylineSegments, outStats.PcSgPolylineSegments, 2);
+                AddRow("Arcs", inStats.PcSgArcs, outStats.PcSgArcs, 1);
+                AddRow("NURBS curves", inStats.PcSgNurbs, outStats.PcSgNurbs, 1);
+            }
 
             _reportPanel.Content = table;
         }
     }
 
+    // (CurveStats class remains identical, append it here)
     public class CurveStats
     {
         public int TopLines, TopPolylines, TopPolylineSegments, TopArcs, TopNurbs, TopPolyCurves;
@@ -236,17 +295,16 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (isTopLevel) { stats.TopPolylines++; stats.TopPolylineSegments += Math.Max(0, plc.PointCount - 1); }
                 else { stats.PcSgPolylines++; stats.PcSgPolylineSegments += Math.Max(0, plc.PointCount - 1); }
             }
-            else if (c is LineCurve) // FIX: Strict type checking only
+            else if (c is LineCurve) 
             {
                 if (isTopLevel) stats.TopLines++; else stats.PcSgLines++;
             }
-            else if (c is ArcCurve) // FIX: Strict type checking only
+            else if (c is ArcCurve) 
             {
                 if (isTopLevel) stats.TopArcs++; else stats.PcSgArcs++;
             }
             else
             {
-                // Anything that hasn't been explicitly converted falls through to here
                 if (isTopLevel) stats.TopNurbs++; else stats.PcSgNurbs++;
             }
         }
