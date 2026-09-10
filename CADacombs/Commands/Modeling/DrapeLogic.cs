@@ -12,19 +12,12 @@ namespace CADacombs.Commands.Modeling
 {
     public static class DrapeLogic
     {
-        // The cancellation flag
-        private static bool _escapePressed = false;
-
-        // The event handler that flips the flag when Escape is pressed
-        private static void OnEscapeKeyPressed(object sender, EventArgs e)
-        {
-            _escapePressed = true;
-        }
+        private static EscapeTracker _escapeTracker;
 
         // Helper method to mimic sc.escape_test()
         public static void CheckEscape()
         {
-            if (_escapePressed)
+            if (_escapeTracker != null && _escapeTracker.IsCanceled)
             {
                 throw new OperationCanceledException("User canceled command.");
             }
@@ -32,134 +25,129 @@ namespace CADacombs.Commands.Modeling
 
         public static Result Execute(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef)
         {
-            // 1. Reset the flag and subscribe to the event
-            _escapePressed = false;
-            RhinoApp.EscapeKeyPressed += OnEscapeKeyPressed;
-
-            try
+            using (_escapeTracker = new EscapeTracker())
             {
-            
-                // 1. Extract Target Geometries
-                var targetBreps = new List<Brep>();
-                var targetMeshes = new List<Mesh>();
-
-                foreach (var r in targetRefs)
+                try
                 {
-                    var geom = r.Geometry();
-                    if (geom is Brep b) targetBreps.Add(b);
-                    else if (geom is Mesh m) targetMeshes.Add(m);
-                }
-
-                // 2. Handle CPlane and Transformations
-                var view = doc.Views.ActiveView;
-                if (view == null) return Result.Failure;
                 
-                Plane cPlane = view.ActiveViewport.ConstructionPlane();
-                if (DrapeOptions.FlipCPlane)
-                {
-                    cPlane.Flip();
-                }
+                    // 1. Extract Target Geometries
+                    var targetBreps = new List<Brep>();
+                    var targetMeshes = new List<Mesh>();
 
-                Transform xformToW = Transform.Identity;
-                Transform xformFromW = Transform.Identity;
-
-                // If not WorldXY, we map everything to WorldXY for the raycasting calculations
-                if (!cPlane.Equals(Plane.WorldXY))
-                {
-                    xformToW = Transform.PlaneToPlane(cPlane, Plane.WorldXY);
-                    xformFromW = Transform.PlaneToPlane(Plane.WorldXY, cPlane);
-
-                    foreach (var b in targetBreps) b.Transform(xformToW);
-                    foreach (var m in targetMeshes) m.Transform(xformToW);
-                }
-
-                // 3. Obtain Starting Surface
-                NurbsSurface nsWIP;
-                if (startingSrfRef == null)
-                {
-                    // Combine geometries for bounding box calculation
-                    var allGeom = new List<GeometryBase>();
-                    allGeom.AddRange(targetBreps);
-                    allGeom.AddRange(targetMeshes);
-
-                    nsWIP = CreateStartingSurface(allGeom, DrapeOptions.SpanSpacing, DrapeOptions.SpansBeyondEachSide);
-                }
-                else
-                {
-                    Surface srf = startingSrfRef.Surface();
-                    if (srf == null && startingSrfRef.Brep()?.Faces.Count == 1)
-                        srf = startingSrfRef.Brep().Faces[0].UnderlyingSurface();
-                    
-                    nsWIP = srf.ToNurbsSurface();
-                    if (!xformToW.IsIdentity) nsWIP.Transform(xformToW);
-                }
-
-                // 4. Extract Greville Points & Project to Targets
-                Point3d[,] grevillePts = GetGrevillePoints(nsWIP);
-                Point3d?[,] targetPts = ProjectPtsToObjs(grevillePts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
-
-                if (targetPts == null)
-                {
-                    RhinoApp.WriteLine("Projected points were not obtained.");
-                    return Result.Failure;
-                }
-
-                // 5. Flatten WIP Surface to Highest Target Elevation
-                double zMax = HighestElevation(targetPts);
-                for (int u = 0; u < nsWIP.Points.CountU; u++)
-                {
-                    for (int v = 0; v < nsWIP.Points.CountV; v++)
+                    foreach (var r in targetRefs)
                     {
-                        ControlPoint cp = nsWIP.Points.GetControlPoint(u, v);
-                        nsWIP.Points.SetPoint(u, v, cp.Location.X, cp.Location.Y, zMax);
+                        var geom = r.Geometry();
+                        if (geom is Brep b) targetBreps.Add(b);
+                        else if (geom is Mesh m) targetMeshes.Add(m);
                     }
-                }
 
-                // 6. Handle Missing Points (Raycast Misses)
-                if (HasMissingPoints(targetPts))
+                    // 2. Handle CPlane and Transformations
+                    var view = doc.Views.ActiveView;
+                    if (view == null) return Result.Failure;
+                    
+                    Plane cPlane = view.ActiveViewport.ConstructionPlane();
+                    if (DrapeOptions.FlipCPlane)
+                    {
+                        cPlane.Flip();
+                    }
+
+                    Transform xformToW = Transform.Identity;
+                    Transform xformFromW = Transform.Identity;
+
+                    // If not WorldXY, we map everything to WorldXY for the raycasting calculations
+                    if (!cPlane.Equals(Plane.WorldXY))
+                    {
+                        xformToW = Transform.PlaneToPlane(cPlane, Plane.WorldXY);
+                        xformFromW = Transform.PlaneToPlane(Plane.WorldXY, cPlane);
+
+                        foreach (var b in targetBreps) b.Transform(xformToW);
+                        foreach (var m in targetMeshes) m.Transform(xformToW);
+                    }
+
+                    // 3. Obtain Starting Surface
+                    NurbsSurface nsWIP;
+                    if (startingSrfRef == null)
+                    {
+                        // Combine geometries for bounding box calculation
+                        var allGeom = new List<GeometryBase>();
+                        allGeom.AddRange(targetBreps);
+                        allGeom.AddRange(targetMeshes);
+
+                        nsWIP = CreateStartingSurface(allGeom, DrapeOptions.SpanSpacing, DrapeOptions.SpansBeyondEachSide);
+                    }
+                    else
+                    {
+                        Surface srf = startingSrfRef.Surface();
+                        if (srf == null && startingSrfRef.Brep()?.Faces.Count == 1)
+                            srf = startingSrfRef.Brep().Faces[0].UnderlyingSurface();
+                        
+                        nsWIP = srf.ToNurbsSurface();
+                        if (!xformToW.IsIdentity) nsWIP.Transform(xformToW);
+                    }
+
+                    // 4. Extract Greville Points & Project to Targets
+                    Point3d[,] grevillePts = GetGrevillePoints(nsWIP);
+                    Point3d?[,] targetPts = ProjectPtsToObjs(grevillePts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
+
+                    if (targetPts == null)
+                    {
+                        RhinoApp.WriteLine("Projected points were not obtained.");
+                        return Result.Failure;
+                    }
+
+                    // 5. Flatten WIP Surface to Highest Target Elevation
+                    double zMax = HighestElevation(targetPts);
+                    for (int u = 0; u < nsWIP.Points.CountU; u++)
+                    {
+                        for (int v = 0; v < nsWIP.Points.CountV; v++)
+                        {
+                            ControlPoint cp = nsWIP.Points.GetControlPoint(u, v);
+                            nsWIP.Points.SetPoint(u, v, cp.Location.X, cp.Location.Y, zMax);
+                        }
+                    }
+
+                    // 6. Handle Missing Points (Raycast Misses)
+                    if (HasMissingPoints(targetPts))
+                    {
+                        // TODO: Delegate to missing points solver (implemented in Part 2)
+                        targetPts = ResolveMissingPoints(targetPts, grevillePts, nsWIP, DrapeOptions.TargetMisses);
+                    }
+
+                    // 7. Iterative Fitting Routine
+                    NurbsSurface nsOut;
+                    if (targetBreps.Count == 1 && targetMeshes.Count == 0 && targetBreps[0].Faces.Count == 1)
+                    {
+                        // TODO: Single surface simplified fit (implemented in Part 2)
+                        nsOut = FitIterTranslIndivPts(targetPts, nsWIP, DrapeOptions.Tolerance);
+                    }
+                    else
+                    {
+                        // TODO: Full high-to-low 9-pt fit (implemented in Part 2)
+                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug);
+                    }
+
+                    // 8. Output and Cleanup
+                    if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
+
+                    if (DrapeOptions.UserProvidesStartingSrf && DrapeOptions.DeleteStartingSrf)
+                    {
+                        doc.Objects.Delete(startingSrfRef.ObjectId, true);
+                    }
+
+                    Guid gOut = doc.Objects.AddSurface(nsOut);
+                    nsOut.Dispose();
+
+                    if (gOut == Guid.Empty) return Result.Failure;
+
+                    doc.Views.Redraw();
+                    return Result.Success;
+                }
+                catch (OperationCanceledException ex)
                 {
-                    // TODO: Delegate to missing points solver (implemented in Part 2)
-                    targetPts = ResolveMissingPoints(targetPts, grevillePts, nsWIP, DrapeOptions.TargetMisses);
+                    // This catches the escape gracefully from ANY nested method
+                    RhinoApp.WriteLine(ex.Message);
+                    return Result.Cancel;
                 }
-
-                // 7. Iterative Fitting Routine
-                NurbsSurface nsOut;
-                if (targetBreps.Count == 1 && targetMeshes.Count == 0 && targetBreps[0].Faces.Count == 1)
-                {
-                    // TODO: Single surface simplified fit (implemented in Part 2)
-                    nsOut = FitIterTranslIndivPts(targetPts, nsWIP, DrapeOptions.Tolerance);
-                }
-                else
-                {
-                    // TODO: Full high-to-low 9-pt fit (implemented in Part 2)
-                    nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug);
-                }
-
-                // 8. Output and Cleanup
-                if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
-
-                if (DrapeOptions.UserProvidesStartingSrf && DrapeOptions.DeleteStartingSrf)
-                {
-                    doc.Objects.Delete(startingSrfRef.ObjectId, true);
-                }
-
-                Guid gOut = doc.Objects.AddSurface(nsOut);
-                nsOut.Dispose();
-
-                if (gOut == Guid.Empty) return Result.Failure;
-
-                doc.Views.Redraw();
-                return Result.Success;
-            }
-            catch (OperationCanceledException ex)
-            {
-                // This catches the escape gracefully from ANY nested method
-                RhinoApp.WriteLine(ex.Message);
-                return Result.Cancel;
-            }
-            finally
-            {
-                RhinoApp.EscapeKeyPressed -= OnEscapeKeyPressed;
             }
         }
 

@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino.Geometry;
-using CADacombs.Core; // Required for CADacombsDialogBase
+using CADacombs.Core; 
+using CADacombs.Core.Curves;
 
 namespace CADacombs.Commands.Modeling.Curves
 {
@@ -12,14 +13,21 @@ namespace CADacombs.Commands.Modeling.Curves
         private List<Curve> _inputCurves;
         private SimplifyCrvConduit _conduit;
         
+        private TextBox _txtDistTol;
+        private TextBox _txtAngleTol;
+        private CheckBox[] _chkDegrees;
+        
         private CheckBox _chkSpansToLines;
         private CheckBox _chkSpansToArcs;
-        private CheckBox _chkPolylineOutput;
+        private CheckBox _chkAdjustG1;
+        private CheckBox _chkSpansToBeziers;
         private CheckBox _chkSplitAllKnots;
         private CheckBox _chkSplitFullyMultiple;
-        private CheckBox _chkAdjustG1;
+        private CheckBox _chkPolylineOutput;
         
         private Label _lblProcessedCount;
+        private Label _lblMaxDev;
+        private ProgressBar _progressBar;
         private Panel _reportPanel;
         
         private Button _btnOk;
@@ -27,8 +35,17 @@ namespace CADacombs.Commands.Modeling.Curves
         private Button _btnPreview;
 
         private bool _isComplex;
+
         public List<Curve> ResultCurves { get; private set; }
-        public bool AnyOptionChecked => _chkSpansToLines.Checked == true || _chkSpansToArcs.Checked == true || _chkPolylineOutput.Checked == true;
+        public double MaxDeviation { get; private set; }
+        
+        public bool AnyOptionChecked => _chkSpansToLines.Checked == true || 
+                                        _chkSpansToArcs.Checked == true || 
+                                        _chkAdjustG1.Checked == true ||
+                                        _chkSpansToBeziers.Checked == true || 
+                                        _chkSplitAllKnots.Checked == true ||
+                                        _chkSplitFullyMultiple.Checked == true ||
+                                        _chkPolylineOutput.Checked == true;
         
         public bool HasChanges { get; private set; } 
 
@@ -37,6 +54,11 @@ namespace CADacombs.Commands.Modeling.Curves
             _inputCurves = inputCurves;
             _conduit = conduit;
             
+            if (SimplifyCrvOptions.DistanceTolerance < 0)
+                SimplifyCrvOptions.DistanceTolerance = Rhino.RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+            if (SimplifyCrvOptions.AngleTolerance < 0)
+                SimplifyCrvOptions.AngleTolerance = Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
+
             int totalSpans = 0;
             foreach (var crv in _inputCurves) totalSpans += crv.SpanCount;
             _isComplex = totalSpans > 500;
@@ -50,36 +72,50 @@ namespace CADacombs.Commands.Modeling.Curves
             CreateControls();
             SetupLayout();
             
-            if (!_isComplex) UpdatePreview();
+            this.Shown += (s, e) => 
+            {
+                bool requiresManual = _isComplex || (_chkSpansToBeziers.Checked ?? false);
+                _btnPreview.Enabled = requiresManual;
+                if (!requiresManual) UpdatePreview();
+            };
         }
 
-        // --- DialogBase Implementations ---
         protected override Eto.Drawing.Point? LoadSavedLocation() => SimplifyCrvOptions.WindowLocation;
         protected override void SaveCurrentLocation(Eto.Drawing.Point location) => SimplifyCrvOptions.WindowLocation = location;
 
         private void CreateControls()
         {
+            _txtDistTol = new TextBox { Text = SimplifyCrvOptions.DistanceTolerance.ToString(), Width = 60 };
+            _txtAngleTol = new TextBox { Text = SimplifyCrvOptions.AngleTolerance.ToString(), Width = 60 };
+
+            _chkDegrees = new CheckBox[9];
+            for (int i = 0; i < 9; i++)
+            {
+                _chkDegrees[i] = new CheckBox 
+                { 
+                    Text = (i + 1).ToString(), 
+                    Checked = SimplifyCrvOptions.TargetDegrees.Contains(i + 1)
+                };
+                _chkDegrees[i].CheckedChanged += OnOptionChanged;
+            }
+
             _chkSpansToLines = new CheckBox { Text = "Convert spans to lines", Checked = SimplifyCrvOptions.ConvertLines };
             _chkSpansToArcs = new CheckBox { Text = "Convert spans to arcs", Checked = SimplifyCrvOptions.ConvertArcs };
-            
-            _chkPolylineOutput = new CheckBox 
-            { 
-                Text = "Merge contiguous lines to polylines", 
-                Checked = SimplifyCrvOptions.MergePolylines,
-                ToolTip = "Groups contiguous line segments into single Polyline objects. Requires 'Convert spans to lines' to process linear NURBS spans."
-            };
+            _chkAdjustG1 = new CheckBox { Text = "Adjust G1", Checked = SimplifyCrvOptions.AdjustG1 };
+            _chkSpansToBeziers = new CheckBox { Text = "Convert spans to Beziers", Checked = SimplifyCrvOptions.ConvertBeziers };
             _chkSplitAllKnots = new CheckBox { Text = "Split at all multiple knots", Checked = SimplifyCrvOptions.SplitAllKnots };
             _chkSplitFullyMultiple = new CheckBox { Text = "Split at fully multiple knots", Checked = SimplifyCrvOptions.SplitFullyMultiple };
-            _chkAdjustG1 = new CheckBox { Text = "Adjust G1", Checked = SimplifyCrvOptions.AdjustG1 };
-
-            // Manage the disabled state initially
+            _chkPolylineOutput = new CheckBox { Text = "Merge contiguous lines to polylines", Checked = SimplifyCrvOptions.MergePolylines };
+            
             if (_chkSplitAllKnots.Checked == true) _chkSplitFullyMultiple.Enabled = false;
 
-            // Event Listeners
+            _txtDistTol.TextChanged += OnOptionChanged;
+            _txtAngleTol.TextChanged += OnOptionChanged;
             _chkSpansToLines.CheckedChanged += OnOptionChanged;
             _chkSpansToArcs.CheckedChanged += OnOptionChanged;
-            _chkPolylineOutput.CheckedChanged += OnOptionChanged;
             _chkAdjustG1.CheckedChanged += OnOptionChanged;
+            _chkSpansToBeziers.CheckedChanged += OnOptionChanged;
+            _chkPolylineOutput.CheckedChanged += OnOptionChanged;
             _chkSplitFullyMultiple.CheckedChanged += OnOptionChanged;
 
             _chkSplitAllKnots.CheckedChanged += (s, e) =>
@@ -89,7 +125,10 @@ namespace CADacombs.Commands.Modeling.Curves
             };
 
             _lblProcessedCount = new Label { Text = "Processed 0 curve(s)." };
+            _lblMaxDev = new Label { Text = "Max Dev: 0.0", TextColor = Colors.DimGray };
             _reportPanel = new Panel();
+            
+            _progressBar = new ProgressBar { MinValue = 0, MaxValue = _inputCurves.Count, Value = 0, Visible = false, Height = 10 };
 
             _btnOk = new Button { Text = "OK", Width = 75 };
             _btnOk.Click += (s, e) => { Result = true; Close(); };
@@ -97,7 +136,7 @@ namespace CADacombs.Commands.Modeling.Curves
             _btnCancel = new Button { Text = "Cancel", Width = 75 };
             _btnCancel.Click += (s, e) => { Result = false; Close(); };
 
-            _btnPreview = new Button { Text = "Preview", Width = 75, Enabled = _isComplex };
+            _btnPreview = new Button { Text = "Preview", Width = 75, Enabled = true };
             _btnPreview.Click += (s, e) => UpdatePreview();
 
             DefaultButton = _btnOk;
@@ -106,17 +145,33 @@ namespace CADacombs.Commands.Modeling.Curves
 
         private void SetupLayout()
         {
+            var tolLayout = new DynamicLayout { DefaultSpacing = new Size(5, 5) };
+            tolLayout.AddRow(new Label { Text = "Distance tol.:", VerticalAlignment = VerticalAlignment.Center }, _txtDistTol, 
+                             new Label { Text = "Angle tol. (°):", VerticalAlignment = VerticalAlignment.Center }, _txtAngleTol);
+
+            var degStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 4 };
+            degStack.Items.Add(new Label { Text = "Allowed degrees: ", VerticalAlignment = VerticalAlignment.Center });
+            foreach (var c in _chkDegrees) degStack.Items.Add(c);
+
             var optionsStack = new StackLayout
             {
                 Spacing = 5,
                 Items = { 
                     _chkSpansToLines, 
                     _chkSpansToArcs, 
+                    _chkAdjustG1,
+                    _chkSpansToBeziers, 
                     _chkSplitAllKnots, 
                     _chkSplitFullyMultiple, 
-                    _chkAdjustG1,
-                    _chkPolylineOutput // Moved to the very bottom
+                    _chkPolylineOutput 
                 }
+            };
+
+            var resultsHeader = new StackLayout 
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 10,
+                Items = { _lblProcessedCount, _lblMaxDev }
             };
 
             var buttonStack = new StackLayout
@@ -128,9 +183,13 @@ namespace CADacombs.Commands.Modeling.Curves
 
             var layout = new DynamicLayout { DefaultSpacing = new Size(5, 10) };
             
+            layout.AddRow(tolLayout);
+            layout.AddRow(degStack);
+            layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             layout.AddRow(optionsStack);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
-            layout.AddRow(_lblProcessedCount);
+            layout.AddRow(_progressBar);
+            layout.AddRow(resultsHeader);
             layout.AddRow(_reportPanel);
             layout.AddRow(buttonStack); 
 
@@ -139,26 +198,43 @@ namespace CADacombs.Commands.Modeling.Curves
 
         protected override void OnClosed(EventArgs e)
         {
-            // Save states regardless of OK or Cancel
+            if (double.TryParse(_txtDistTol.Text, out double dTol)) SimplifyCrvOptions.DistanceTolerance = dTol;
+            if (double.TryParse(_txtAngleTol.Text, out double aTol)) SimplifyCrvOptions.AngleTolerance = aTol;
+
             SimplifyCrvOptions.ConvertLines = _chkSpansToLines.Checked ?? false;
             SimplifyCrvOptions.ConvertArcs = _chkSpansToArcs.Checked ?? false;
-            SimplifyCrvOptions.MergePolylines = _chkPolylineOutput.Checked ?? false;
+            SimplifyCrvOptions.AdjustG1 = _chkAdjustG1.Checked ?? false;
+            SimplifyCrvOptions.ConvertBeziers = _chkSpansToBeziers.Checked ?? false;
+            
+            SimplifyCrvOptions.TargetDegrees.Clear();
+            for (int i = 0; i < 9; i++)
+            {
+                if (_chkDegrees[i].Checked == true) SimplifyCrvOptions.TargetDegrees.Add(i + 1);
+            }
+            
             SimplifyCrvOptions.SplitAllKnots = _chkSplitAllKnots.Checked ?? false;
             SimplifyCrvOptions.SplitFullyMultiple = _chkSplitFullyMultiple.Checked ?? false;
-            SimplifyCrvOptions.AdjustG1 = _chkAdjustG1.Checked ?? false;
+            SimplifyCrvOptions.MergePolylines = _chkPolylineOutput.Checked ?? false;
             
-            base.OnClosed(e); // Saves the window location via CADacombsDialogBase
+            base.OnClosed(e); 
         }
 
         private void OnOptionChanged(object sender, EventArgs e)
         {
-            if (_isComplex) 
+            bool requiresManual = _isComplex || (_chkSpansToBeziers.Checked ?? false);
+            _btnPreview.Enabled = requiresManual;
+
+            if (requiresManual) 
             {
                 _lblProcessedCount.Text = "Options changed. Click Preview to update.";
+                _lblMaxDev.Text = "";
                 _reportPanel.Content = null;
                 if (ParentWindow != null) this.Size = new Size(this.Width, -1);
             }
-            else UpdatePreview();
+            else 
+            {
+                UpdatePreview();
+            }
         }
 
         private void UpdatePreview()
@@ -166,6 +242,7 @@ namespace CADacombs.Commands.Modeling.Curves
             _conduit.HighlightLines = _chkSpansToLines.Checked ?? false;
             _conduit.HighlightArcs = _chkSpansToArcs.Checked ?? false;
             ResultCurves = new List<Curve>();
+            MaxDeviation = 0.0;
 
             if (!AnyOptionChecked)
             {
@@ -173,31 +250,61 @@ namespace CADacombs.Commands.Modeling.Curves
             }
             else
             {
-                double distTol = Rhino.RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
-                double angleTol = Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceRadians;
-                
-                foreach (var inputCurve in _inputCurves)
+                _progressBar.Visible = true;
+                _progressBar.Value = 0;
+
+                using (var escape = new EscapeTracker())
                 {
-                    var result = SimplifyCrvLogic.ExecutePipeline(
-                        inputCurve, distTol, angleTol,
-                        _chkSpansToLines.Checked ?? false, 
-                        _chkSpansToArcs.Checked ?? false,
-                        _chkPolylineOutput.Checked ?? false,
-                        _chkSplitAllKnots.Checked ?? false, 
-                        _chkSplitFullyMultiple.Checked ?? false, 
-                        _chkAdjustG1.Checked ?? false
-                        );
+                    if (!double.TryParse(_txtDistTol.Text, out double distTol)) distTol = Rhino.RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+                    if (!double.TryParse(_txtAngleTol.Text, out double angleTolDegrees)) angleTolDegrees = Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
+                    double angleTolRad = Rhino.RhinoMath.ToRadians(angleTolDegrees);
+                    
+                    List<int> targets = new List<int>();
+                    for (int i = 0; i < 9; i++) if (_chkDegrees[i].Checked == true) targets.Add(i + 1);
+                    
+                    int curvesProcessed = 0;
+                    foreach (var inputCurve in _inputCurves)
+                    {
+                        if (escape.IsCanceled)
+                        {
+                            Rhino.RhinoApp.WriteLine("Calculation cancelled by user.");
+                            _lblProcessedCount.Text = "Calculation cancelled.";
+                            break; 
+                        }
 
-                    ResultCurves.Add(result.ResultCurve);
+                        var result = SimplifyCrvLogic.ExecutePipeline(
+                            inputCurve, distTol, angleTolRad,
+                            _chkSpansToLines.Checked ?? false, 
+                            _chkSpansToArcs.Checked ?? false,
+                            _chkAdjustG1.Checked ?? false,
+                            _chkSpansToBeziers.Checked ?? false,
+                            targets,
+                            _chkSplitAllKnots.Checked ?? false, 
+                            _chkSplitFullyMultiple.Checked ?? false, 
+                            _chkPolylineOutput.Checked ?? false
+                            );
+
+                        MaxDeviation = Math.Max(MaxDeviation, result.MaxDev);
+                        ResultCurves.Add(result.ResultCurve);
+
+                        curvesProcessed++;
+                        _progressBar.Value++;
+                        Rhino.RhinoApp.Wait(); 
+                    }
+
+                    if (!escape.IsCanceled)
+                    {
+                        var inStats = CurveStats.Analyze(_inputCurves);
+                        var outStats = CurveStats.Analyze(ResultCurves);
+                        HasChanges = inStats.HasDifferences(outStats);
+
+                        _lblProcessedCount.Text = $"Processed {curvesProcessed} curve(s).";
+                        _lblMaxDev.Text = $"Max Dev: {MaxDeviation:E3}";
+                        BuildReportTable(inStats, outStats);
+                    }
                 }
+                _progressBar.Visible = false;
             }
-
-            var inStats = CurveStats.Analyze(_inputCurves);
-            var outStats = CurveStats.Analyze(ResultCurves);
-            HasChanges = inStats.HasDifferences(outStats);
-
-            _lblProcessedCount.Text = $"Processed {_inputCurves.Count} curve(s).";
-            BuildReportTable(inStats, outStats);
 
             if (ParentWindow != null) this.Size = new Size(this.Width, -1);
 
@@ -249,6 +356,7 @@ namespace CADacombs.Commands.Modeling.Curves
             AddRow("Polylines", inStats.TopPolylines, outStats.TopPolylines, 1);
             AddRow("Segments", inStats.TopPolylineSegments, outStats.TopPolylineSegments, 2);
             AddRow("Arcs", inStats.TopArcs, outStats.TopArcs, 1);
+            AddRow("Beziers", inStats.TopBeziers, outStats.TopBeziers, 1);
             AddRow("NURBS curves", inStats.TopNurbs, outStats.TopNurbs, 1);
             AddRow("Polycurves", inStats.TopPolyCurves, outStats.TopPolyCurves, 1);
             
@@ -260,6 +368,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 AddRow("Polylines", inStats.PcSgPolylines, outStats.PcSgPolylines, 1);
                 AddRow("Segments", inStats.PcSgPolylineSegments, outStats.PcSgPolylineSegments, 2);
                 AddRow("Arcs", inStats.PcSgArcs, outStats.PcSgArcs, 1);
+                AddRow("Beziers", inStats.PcSgBeziers, outStats.PcSgBeziers, 1);
                 AddRow("NURBS curves", inStats.PcSgNurbs, outStats.PcSgNurbs, 1);
             }
 
@@ -267,11 +376,10 @@ namespace CADacombs.Commands.Modeling.Curves
         }
     }
 
-    // (CurveStats class remains identical, append it here)
     public class CurveStats
     {
-        public int TopLines, TopPolylines, TopPolylineSegments, TopArcs, TopNurbs, TopPolyCurves;
-        public int PcSgTotal, PcSgLines, PcSgPolylines, PcSgPolylineSegments, PcSgArcs, PcSgNurbs;
+        public int TopLines, TopPolylines, TopPolylineSegments, TopArcs, TopBeziers, TopNurbs, TopPolyCurves;
+        public int PcSgTotal, PcSgLines, PcSgPolylines, PcSgPolylineSegments, PcSgArcs, PcSgBeziers, PcSgNurbs;
 
         public static CurveStats Analyze(IEnumerable<Curve> curves)
         {
@@ -303,6 +411,10 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 if (isTopLevel) stats.TopArcs++; else stats.PcSgArcs++;
             }
+            else if (c is NurbsCurve nc && nc.SpanCount == 1 && !nc.IsRational)
+            {
+                if (isTopLevel) stats.TopBeziers++; else stats.PcSgBeziers++;
+            }
             else
             {
                 if (isTopLevel) stats.TopNurbs++; else stats.PcSgNurbs++;
@@ -313,10 +425,12 @@ namespace CADacombs.Commands.Modeling.Curves
         {
             return TopLines != other.TopLines || TopPolylines != other.TopPolylines || 
                    TopPolylineSegments != other.TopPolylineSegments || TopArcs != other.TopArcs || 
-                   TopNurbs != other.TopNurbs || TopPolyCurves != other.TopPolyCurves || 
+                   TopBeziers != other.TopBeziers || TopNurbs != other.TopNurbs || 
+                   TopPolyCurves != other.TopPolyCurves || 
                    PcSgTotal != other.PcSgTotal || PcSgLines != other.PcSgLines || 
                    PcSgPolylines != other.PcSgPolylines || PcSgPolylineSegments != other.PcSgPolylineSegments || 
-                   PcSgArcs != other.PcSgArcs || PcSgNurbs != other.PcSgNurbs;
+                   PcSgArcs != other.PcSgArcs || PcSgBeziers != other.PcSgBeziers || 
+                   PcSgNurbs != other.PcSgNurbs;
         }
     }
 }

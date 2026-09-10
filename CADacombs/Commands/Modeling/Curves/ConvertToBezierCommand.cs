@@ -1,14 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Rhino;
 using Rhino.Commands;
 using Rhino.DocObjects;
 using Rhino.Geometry;
-using Rhino.Input;
 using Rhino.Input.Custom;
 using CADacombs.Core.Curves;
-using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Modeling.Curves
 {
@@ -20,17 +17,19 @@ namespace CADacombs.Commands.Modeling.Curves
         public override string EnglishName => "ccConvertCrvToBezier";
 
         // Sticky Options
-        private bool _deleteInput = true;
-        private bool _keepOriginalDegree = false;
         private bool _preserveTangents = true;
-        private string _targetDegreesString = "352";
+        private bool _limitDev = true;
         private double _devTol = -1.0; 
+        private string _targetDegreesString = "235";
+        
+        // Exclude Options
+        private bool _excludeBeziers = true;
+        private bool _excludeLines = true;
+        private bool _excludeArcs = true;
+        private bool _excludeOtherConical = true;
 
-        // Skip Options
-        private bool _skipLines = true;
-        private bool _skipArcs = true;
-        private bool _skipBeziers = true;
-        private bool _skipOtherConical = true;
+        private bool _deleteInput = true;
+        private bool _debug = false;
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
@@ -44,28 +43,26 @@ namespace CADacombs.Commands.Modeling.Curves
             go.EnableClearObjectsOnEntry(false);
             go.EnableUnselectObjectsOnExit(false);
 
-            OptionToggle optDelete = new OptionToggle(_deleteInput, "No", "Yes");
-            OptionToggle optKeepDeg = new OptionToggle(_keepOriginalDegree, "No", "Yes");
             OptionToggle optPreserve = new OptionToggle(_preserveTangents, "No", "Yes");
+            OptionToggle optLimitDev = new OptionToggle(_limitDev, "No", "Yes");
             OptionDouble optDevTol = new OptionDouble(_devTol);
+            OptionToggle optDelete = new OptionToggle(_deleteInput, "No", "Yes");
+            OptionToggle optDebug = new OptionToggle(_debug, "No", "Yes");
 
             while (true)
             {
                 go.ClearCommandOptions();
                 
+                int idxPreserve = go.AddOptionToggle("PreserveTans", ref optPreserve);
+                int idxLimit = go.AddOptionToggle("LimitDev", ref optLimitDev);
+                
+                int idxTol = -1;
+                if (_limitDev) idxTol = go.AddOptionDouble("DevTol", ref optDevTol);
+                
+                int idxTarget = go.AddOption("TargetDegrees", _targetDegreesString); 
+                int idxExclude = go.AddOption("ExcludeSettings"); // Fixed: Removed punctuation
                 int idxDelete = go.AddOptionToggle("DeleteInput", ref optDelete);
-                int idxKeep = go.AddOptionToggle("KeepOriginalDegree", ref optKeepDeg);
-                
-                int idxTarget = -1;
-                if (!_keepOriginalDegree)
-                {
-                    // Displays the current string next to the option
-                    idxTarget = go.AddOption("TargetDegrees", _targetDegreesString); 
-                }
-                
-                int idxTol = go.AddOptionDouble("DevTol", ref optDevTol);
-                int idxPreserve = go.AddOptionToggle("PreserveTangents", ref optPreserve);
-                int idxSkip = go.AddOption("SkipSettings..."); // Acts as a button to open the sub-menu
+                int idxDebug = go.AddOptionToggle("Debug", ref optDebug);
 
                 var res = go.GetMultiple(1, 0);
 
@@ -75,21 +72,21 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (res == Rhino.Input.GetResult.Option)
                 {
                     var opt = go.Option();
-                    if (opt.Index == idxDelete) _deleteInput = optDelete.CurrentValue;
-                    else if (opt.Index == idxKeep) _keepOriginalDegree = optKeepDeg.CurrentValue;
+                    if (opt.Index == idxPreserve) _preserveTangents = optPreserve.CurrentValue;
+                    else if (opt.Index == idxLimit) _limitDev = optLimitDev.CurrentValue;
                     else if (opt.Index == idxTol) _devTol = optDevTol.CurrentValue;
-                    else if (opt.Index == idxPreserve) _preserveTangents = optPreserve.CurrentValue;
-                    else if (opt.Index == idxSkip) 
+                    else if (opt.Index == idxDelete) _deleteInput = optDelete.CurrentValue;
+                    else if (opt.Index == idxDebug) _debug = optDebug.CurrentValue;
+                    else if (opt.Index == idxExclude) 
                     {
-                        RunSkipSettingsMenu();
+                        RunExcludeSettingsMenu();
                     }
                     else if (opt.Index == idxTarget)
                     {
                         string inputStr = _targetDegreesString;
-                        var strRes = RhinoGet.GetString("Enter target degrees as a single string (e.g., 2357)", true, ref inputStr);
+                        var strRes = Rhino.Input.RhinoGet.GetString("Enter target degrees (e.g., 235)", true, ref inputStr);
                         if (strRes == Result.Success && !string.IsNullOrWhiteSpace(inputStr))
                         {
-                            // Clean the string immediately using our Core engine parser
                             var cleanedList = ConvertToBezierLogic.ParseDegreesString(inputStr);
                             _targetDegreesString = string.Join("", cleanedList);
                         }
@@ -99,39 +96,30 @@ namespace CADacombs.Commands.Modeling.Curves
 
             int processedCount = 0;
             List<Guid> newObjectIds = new List<Guid>();
+            List<int> targets = ConvertToBezierLogic.ParseDegreesString(_targetDegreesString);
+
+            if (targets.Count == 0) return Result.Cancel;
 
             foreach (var objRef in go.Objects())
             {
                 Curve crv = objRef.Curve();
                 if (crv == null) continue;
 
-                // Handle SkipOtherConical directly in the command wrapper
-                if (_skipOtherConical && crv.ToNurbsCurve() != null)
+                var result = ConvertToBezierLogic.TryConvert(
+                    crv, targets, _limitDev, _devTol, _preserveTangents, 
+                    _excludeBeziers, _excludeLines, _excludeArcs, _excludeOtherConical, _debug);
+
+                if (_debug && !string.IsNullOrEmpty(result.Log))
                 {
-                    var nc = crv.ToNurbsCurve();
-                    if (nc.IsRational && nc.Degree <= 2) continue;
+                    RhinoApp.WriteLine($"--- Debug Log for Curve {objRef.ObjectId} ---");
+                    RhinoApp.WriteLine(result.Log);
                 }
-
-                // Determine target degrees
-                List<int> targets = _keepOriginalDegree 
-                    ? new List<int> { crv.Degree } 
-                    : ConvertToBezierLogic.ParseDegreesString(_targetDegreesString);
-
-                if (targets.Count == 0)
-                {
-                    RhinoApp.WriteLine("No valid target degrees provided.");
-                    break;
-                }
-
-                // Send to Core Engine
-                var result = ConvertToBezierLogic.TryConvert(crv, targets, _devTol, _preserveTangents, _skipLines, _skipArcs);
 
                 if (result.Bezier != null)
                 {
                     if (_deleteInput)
                     {
-                        if (doc.Objects.Replace(objRef.ObjectId, result.Bezier))
-                            processedCount++;
+                        if (doc.Objects.Replace(objRef.ObjectId, result.Bezier)) processedCount++;
                     }
                     else
                     {
@@ -145,56 +133,49 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
             }
 
-            if (processedCount > 0)
+            RhinoApp.WriteLine(processedCount > 0 
+                ? $"Successfully converted {processedCount} curve(s) to Bezier." 
+                : "No curves could be converted to Bezier under the current constraints.");
+
+            if (!_deleteInput && newObjectIds.Count > 0)
             {
-                RhinoApp.WriteLine($"Successfully converted {processedCount} curve(s) to Bezier.");
-                
-                if (!_deleteInput && newObjectIds.Count > 0)
-                {
-                    doc.Objects.UnselectAll();
-                    foreach (Guid id in newObjectIds) doc.Objects.Select(id);
-                }
-            }
-            else
-            {
-                RhinoApp.WriteLine("No curves could be converted to Bezier within the specified tolerance.");
+                doc.Objects.UnselectAll();
+                foreach (Guid id in newObjectIds) doc.Objects.Select(id);
             }
 
             doc.Views.Redraw();
             return Result.Success;
         }
 
-        private void RunSkipSettingsMenu()
+        private void RunExcludeSettingsMenu()
         {
             var go = new GetOption();
-            go.SetCommandPrompt("Configure skip settings");
-            go.AcceptNothing(true); // Pressing enter returns to main menu
+            go.SetCommandPrompt("Object exclusion settings");
+            go.AcceptNothing(true); 
 
-            OptionToggle optLines = new OptionToggle(_skipLines, "No", "Yes");
-            OptionToggle optArcs = new OptionToggle(_skipArcs, "No", "Yes");
-            OptionToggle optBez = new OptionToggle(_skipBeziers, "No", "Yes");
-            OptionToggle optConic = new OptionToggle(_skipOtherConical, "No", "Yes");
+            OptionToggle optBez = new OptionToggle(_excludeBeziers, "No", "Yes");
+            OptionToggle optLines = new OptionToggle(_excludeLines, "No", "Yes");
+            OptionToggle optArcs = new OptionToggle(_excludeArcs, "No", "Yes");
+            OptionToggle optConic = new OptionToggle(_excludeOtherConical, "No", "Yes");
 
             while (true)
             {
                 go.ClearCommandOptions();
-                int idxLines = go.AddOptionToggle("SkipLines", ref optLines);
-                int idxArcs = go.AddOptionToggle("SkipArcs", ref optArcs);
-                int idxBez = go.AddOptionToggle("SkipBeziers", ref optBez);
-                int idxConic = go.AddOptionToggle("SkipOtherConical", ref optConic);
+                int idxBez = go.AddOptionToggle("ExcludeBeziers", ref optBez);
+                int idxLines = go.AddOptionToggle("Lines", ref optLines);
+                int idxArcs = go.AddOptionToggle("Arcs", ref optArcs);
+                int idxConic = go.AddOptionToggle("OtherConical", ref optConic);
 
                 var res = go.Get();
-
-                if (res == Rhino.Input.GetResult.Cancel || res == Rhino.Input.GetResult.Nothing) 
-                    break; // Return to main prompt
+                if (res == Rhino.Input.GetResult.Cancel || res == Rhino.Input.GetResult.Nothing) break; 
 
                 if (res == Rhino.Input.GetResult.Option)
                 {
                     var opt = go.Option();
-                    if (opt.Index == idxLines) _skipLines = optLines.CurrentValue;
-                    else if (opt.Index == idxArcs) _skipArcs = optArcs.CurrentValue;
-                    else if (opt.Index == idxBez) _skipBeziers = optBez.CurrentValue;
-                    else if (opt.Index == idxConic) _skipOtherConical = optConic.CurrentValue;
+                    if (opt.Index == idxBez) _excludeBeziers = optBez.CurrentValue;
+                    else if (opt.Index == idxLines) _excludeLines = optLines.CurrentValue;
+                    else if (opt.Index == idxArcs) _excludeArcs = optArcs.CurrentValue;
+                    else if (opt.Index == idxConic) _excludeOtherConical = optConic.CurrentValue;
                 }
             }
         }

@@ -14,7 +14,6 @@ namespace CADacombs.Commands.Modeling.Curves
         public SimplifyCrvCommand() { Instance = this; }
         public static SimplifyCrvCommand Instance { get; private set; }
         
-        // Updated prefix
         public override string EnglishName => "ccSimplifyCrv";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
@@ -71,7 +70,7 @@ namespace CADacombs.Commands.Modeling.Curves
             
             if (replacedCount > 0)
             {
-                RhinoApp.WriteLine($"Successfully simplified {replacedCount} curve(s).");
+                RhinoApp.WriteLine($"Successfully simplified {replacedCount} curve(s). Max Deviation: {dialog.MaxDeviation:E3}");
             }
             
             doc.Views.Redraw();
