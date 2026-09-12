@@ -7,14 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
-## [0.2.6-alpha] - 2026-09-09
+## [0.2.6] - 2026-09-12
 
 ### Added
 - `ccRemoveCrvKnots`: Implemented smart knot removal using domain normalization ($D(A) = D(R) \cdot \frac{L(A)}{L(R)}$) across fully multiple joints to equalize derivative speeds, paired with a multi-strategy brute-force removal solver.
 - `ccConvertCrvToBezier`: Added single-span Bezier conversion using adaptive cubic bulge-fitting for degree 3 targets and rebuild fallbacks for arbitrary target degrees.
 - `ccGCon`, `ccCrvContinuities`, `ccCrvDiscontinuities`: Added unified geometric continuity analysis tools with $G^\infty$ detection for Degree 2 curves.
-- `ccConvertCrvToArc`, `ccConvertCrvToLine`, `ccSimplifyCrv`: Added curve conversion and greedy span simplification tools.
+- `ccConvertCrvToArc`, `ccConvertCrvToLine`, `ccMakeUniformCrv`, `ccSimplifyCrv`: Added curve conversion, uniformization, and greedy span simplification tools.
+- `ccSelUniformNurbsCrv`: Added a dedicated selection tool to isolate mathematically uniform NURBS curves in the document.
+- `ccSimplifyCrv`: Added a dedicated UI dialog with real-time preview updating, maximum deviation reporting, and granular threshold settings (Max crv dev, Max angle dev, Min seg len, Min arc bulge).
 - **UI / Toolbars:** Refactored `CADacombs.rui` into separate `CADacombs Curves` and `CADacombs Surfaces` toolbars arranged in Creation $\rightarrow$ Modification $\rightarrow$ Analysis order, with button labels abbreviated to 8 characters or fewer.
+
+### Changed
+- `ccAboutCADacombs`: Renamed the administrative command from `ccCADacombsAbout` to `ccAboutCADacombs` for better command-line ergonomics and autocomplete behavior.
+- `ccSimplifyCrv`: Disabled the `AdjustG1` option in the dialog UI while custom tangency smoothing logic is being developed to replace Rhino's native `Simplify` algorithm.
+- `ccSimplifyCrv`: Changed the algorithm to only evaluate the "Min seg len" and "Min arc bulge" thresholds *after* spans have been greedily expanded and assembled, preventing valid long arcs from being rejected because their atomic components were too flat. 
+
+### Fixed
+- `ccSimplifyCrv`: Fixed a severe bug where `Curve.Split()` would artificially merge closed curves across their start/end seam. The pipeline now uses strict `Curve.Trim()` intervals to ensure absolute parametric stability and seam preservation on closed curves.
+- `ccSimplifyCrv`: Fixed an `IndexOutOfRangeException` that triggered when the greedy evaluator attempted to fall back after perfectly reaching the absolute end of an input curve.
+- `ccSimplifyCrv`: Added closed-curve seam healing; the evaluator will now wrap around and join perfectly matched segments across the closed seam instead of leaving an artificial split.
+- `ccConvertCrvToLine`, `ccConvertCrvToArc`: Fixed premature internal length and bulge checks that were overriding the unified thresholds established by `ccSimplifyCrv`.
 
 ## [0.2.5-alpha] - 2026-09-01
 
@@ -50,7 +63,7 @@ Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor
 - `ccEndBulge`: Added a "Reset All Scale and Slide Values" button to the dialog.
 - `ccEndBulge`: Added mouse scroll wheel support to text boxes for quick, tactile increment/decrement value adjustments.
 - `ccEndBulge`: Added informative hover tooltips to the Scale and Slide controls to clarify their geometric impact.
-- `ccCADacombsAbout`: Added a new administrative command to display plugin version and developer information, including a quick link to the Package Manager.
+- `ccAboutCADacombs`: Added a new administrative command to display plugin version and developer information, including a quick link to the Package Manager.
 
 ### Changed
 - `ccEndBulge`: Restructured the dialog layout to establish a strict top-down hierarchy, moving the "Adjust edges" mode toggle to the absolute top, and adding subtle horizontal dividers to separate rules, manipulation, and display settings.

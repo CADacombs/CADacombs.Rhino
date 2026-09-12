@@ -40,8 +40,12 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 * **Smart Upgrading:** Automatically transfers unique knots and safely handles matching to reference surfaces of lesser or greater degrees.
 * **Non-Destructive Options:** Includes toggles to replace the original surface or add a new one, maintain degree (by adding spans instead), and an echo mode for detailed command-line reporting.
 
+---
+
+### Curve and Surface Commands
+
 #### 4. ccEndBulge
-`ccEndBulge` is an interactive alternative to Rhino's native `_EndBulge` command, featuring dialog controls instead of graphics window grip translation.
+`ccEndBulge` is an interactive alternative to Rhino's native `_EndBulge` command, featuring dialog controls instead of graphics window grip translation for both open curves and untrimmed surface edges.
 
 **Key Differences from Native `_EndBulge`**
 * **Command Line & Dialog Interfaces:**
@@ -56,8 +60,9 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 * **Continuity Control:**
   * Continuities to maintain for both ends are explicitly defined (defaults to **G3**) and selectable by the user. 
   * Strict mathematical locking ensures control points are only shifted when permitted by the active continuity tier.
-* **Surface Modification:**
-  * The entire natural edge side of the surface is always modified (isocurve at domain extreme).
+* **Geometry Modification:**
+  * **Curves:** Directly translates the control points at the extreme ends of the open curve.
+  * **Surfaces:** The entire natural edge side of the surface is always modified symmetrically (isocurve at domain extreme).
 
 **Key Similarities**
 * Core function restricts and modifies $p_1$ and $p_2$ locations predictably.
@@ -84,16 +89,25 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 * **ccConvertCrvToLine:** Replaces linear curve spans with exact line segments.
 
 #### 8. ccSimplifyCrv
-`ccSimplifyCrv` performs greedy span evaluation along curve sub-domains to replace qualified spans with lines, arcs, or Bezier curves while enforcing G1/G2 continuity across joints.
+`ccSimplifyCrv` performs greedy span evaluation along curve sub-domains to replace qualified smooth sections with lines, arcs, Beziers, or uniform NURBS curves. 
+* **Granular Control:** Utilizes strict, independent thresholds for `Max crv dev`, `Max angle dev`, `Min seg len`, and `Min arc bulge`.
+* **Seam Preservation:** Mathematically locks the domain structure and parameterization of closed curves during extraction to guarantee zero geometric drifting or `_SelDup` failures.
+* **Interactive UI:** Features a dynamic dialog with live-updating previews and pre/post conversion segment reporting.
+
+#### 9. ccMakeUniformCrv
+Converts non-uniform NURBS curves into uniform NURBS curves while strictly respecting geometric deviation tolerances.
 
 ---
 
 ### Analysis Commands
 
-#### 9. ccGCon
+#### 10. ccSelUniformNurbsCrv
+Selects all mathematically uniform NURBS curves in the active document or within a pre-selected subset of curves.
+
+#### 11. ccGCon
 `ccGCon` measures geometric continuity ($G0$, $G1$, $G2$, $G3$, $G^\infty$) between two curves at a junction using normalized domain scaling and $G3$ geometric matching.
 
-#### 10. ccCrvContinuities & ccCrvDiscontinuities
+#### 12. ccCrvContinuities & ccCrvDiscontinuities
 * **ccCrvContinuities:** Reports geometric continuity levels across all internal span joints of selected curves.
 * **ccCrvDiscontinuities:** Locates and marks curve parameters where continuity drops below a requested target tier.
 
@@ -101,7 +115,7 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 
 ### Utility Commands
 
-#### 11. ccCADacombsAbout
+#### 13. ccAboutCADacombs
 Displays plugin version information, developer credits, and license details.
 
 ---

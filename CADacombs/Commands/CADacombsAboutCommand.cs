@@ -11,7 +11,7 @@ namespace CADacombs.Commands
     public class CADacombsAboutCommand : Rhino.Commands.Command
     {
         // This is the command the user will type into the Rhino command line
-        public override string EnglishName => "ccCADacombsAbout";
+        public override string EnglishName => "ccAboutCADacombs";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {

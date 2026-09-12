@@ -3,49 +3,51 @@ echo =======================================
 echo Building CADacombs.Rhino (RELEASE)
 echo =======================================
 
-:: 1. Clean the previous builds to ensure no stale files[cite: 12]
-dotnet clean CADacombs\CADacombs.csproj --configuration Release[cite: 12]
+:: 1. Clean the previous builds to ensure no stale files
+dotnet clean CADacombs\CADacombs.csproj --configuration Release
 
-:: 2. Compile the Release build[cite: 12]
-dotnet build CADacombs\CADacombs.csproj --configuration Release[cite: 12]
+dotnet restore CADacombs\CADacombs.csproj
 
-:: Check if the build failed and abort if it did[cite: 12]
+:: 2. Compile the Release build
+dotnet build CADacombs\CADacombs.csproj --configuration Release
+
+:: Check if the build failed and abort if it did
 if %ERRORLEVEL% neq 0 (
     echo.
     echo =======================================
-    echo BUILD FAILED! Aborting Yak Packaging.[cite: 12]
+    echo BUILD FAILED! Aborting Yak Packaging.
     echo =======================================
     pause
     exit /b %ERRORLEVEL%
 )
 
-:: 3. Navigate to the output folder where the framework subfolders were created[cite: 12]
-cd CADacombs\bin\Release[cite: 12]
+:: 3. Navigate to the output folder where the framework subfolders were created
+cd CADacombs\bin\Release
 
-:: 4. Copy shared assets to the root of the Release folder so Yak packages them correctly[cite: 12]
-copy net48\manifest.yml .[cite: 12]
-copy net48\CADacombs.rui .[cite: 12]
-copy net48\icon.png .[cite: 12]
+:: 4. Copy shared assets to the root of the Release folder so Yak packages them correctly
+copy net48\manifest.yml .
+copy net48\CADacombs.rui .
+copy net48\icon.png .
 
 if %ERRORLEVEL% neq 0 (
     echo.
     echo =======================================
-    echo ASSET COPY FAILED! Aborting Yak Packaging.[cite: 12]
+    echo ASSET COPY FAILED! Aborting Yak Packaging.
     echo =======================================
-    cd ..\..\..[cite: 12]
+    cd ..\..\..
     pause
     exit /b %ERRORLEVEL%
 )
 
-:: 5. Command Yak to build the package[cite: 12]
+:: 5. Command Yak to build the package
 echo.
 echo =======================================
-echo Creating Yak Package...[cite: 12]
+echo Creating Yak Package...
 echo =======================================
-"C:\Program Files\Rhino 8\System\Yak.exe" build[cite: 12]
+"C:\Program Files\Rhino 8\System\Yak.exe" build
 
-:: Return to the root folder[cite: 12]
-cd ..\..\..[cite: 12]
+:: Return to the root folder
+cd ..\..\..
 
 echo.
 echo =======================================
@@ -57,4 +59,4 @@ if /i "%OpenFolder%"=="" set OpenFolder=Y
 if /i "%OpenFolder%"=="Y" explorer "CADacombs\bin\Release"
 
 echo.
-pause[cite: 12]
+pause

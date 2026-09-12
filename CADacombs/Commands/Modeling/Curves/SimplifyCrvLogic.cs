@@ -11,11 +11,15 @@ namespace CADacombs.Commands.Modeling.Curves
             Curve inputCurve, 
             double distTol, 
             double angleTol,
+            double lineTol,
+            double arcBulgeTol,
+            double minSegLen,
             bool doSpansToLines, 
             bool doSpansToArcs, 
             bool doAdjustG1,
             bool doSpansToBeziers,     
             List<int> targetDegrees,   
+            bool doMakeUniform,
             bool doSplitAllKnots,
             bool doSplitFullyMultiple,
             bool doPolylineOutput)
@@ -26,91 +30,153 @@ namespace CADacombs.Commands.Modeling.Curves
             Curve currentCurve = inputCurve.DuplicateCurve();
             double globalMaxDev = 0.0;
 
-            // --- Tolerance Distribution Logic ---
             double g1DistTol = distTol;
             double g1AngleTol = angleTol;
             double bezierDistTol = distTol;
+            double uniformDistTol = distTol;
 
-            if (doAdjustG1 && doSpansToBeziers)
+            if (doAdjustG1 && (doSpansToBeziers || doMakeUniform))
             {
                 g1DistTol = distTol / 2.0;
                 g1AngleTol = angleTol / 2.0;
                 bezierDistTol = distTol / 2.0;
+                uniformDistTol = distTol / 2.0;
             }
-            // ------------------------------------
 
-            (Curve Curve, double Dev) ProcessSpans(Curve curve, SpanConversionUtils.CurveEvaluator evaluator, bool tolByRatio, double tolRatio, double devTol, double minLen)
+            (Curve Curve, double Dev) ProcessSpans(Curve curve, SpanConversionUtils.CurveEvaluator evaluator, Func<Curve, bool> skipCheck, bool tolByRatio, double tolRatio, double devTol, double minLen, double bulgeTol, bool onlySplitAtFullyMultipleKnots)
             {
-                var nc = curve.ToNurbsCurve();
-                if (nc == null) return (curve, 0.0);
-
-                var result = SpanConversionUtils.ConvertBetweenKnots(nc, evaluator, tolByRatio, tolRatio, devTol, minLen);
-                
-                if (result.HasValue)
+                double localDev = 0.0;
+                if (curve is PolyCurve pc)
                 {
-                    double localDev = result.Value.MaxDev;
-                    if (result.Value.Segments.Length == 1) return (result.Value.Segments[0], localDev);
-                    
                     PolyCurve newPc = new PolyCurve();
-                    foreach (var resSeg in result.Value.Segments) newPc.Append(resSeg);
-                    return (newPc, localDev);
+                    bool modified = false;
+                    List<Curve> batch = new List<Curve>();
+                    
+                    void FlushBatch()
+                    {
+                        if (batch.Count == 0) return;
+                        
+                        Curve crvToEval = batch[0];
+                        if (batch.Count > 1)
+                        {
+                            PolyCurve tempPc = new PolyCurve();
+                            foreach (var c in batch) tempPc.Append(c);
+                            crvToEval = (Curve)tempPc.ToNurbsCurve() ?? tempPc; 
+                        }
+                        
+                        var nc = crvToEval.ToNurbsCurve();
+                        if (nc != null)
+                        {
+                            var result = SpanConversionUtils.ConvertBetweenKnots(nc, evaluator, tolByRatio, tolRatio, devTol, minLen, bulgeTol, onlySplitAtFullyMultipleKnots);
+                            if (result.HasValue)
+                            {
+                                modified = true;
+                                localDev = Math.Max(localDev, result.Value.MaxDev);
+                                foreach (var resSeg in result.Value.Segments) newPc.Append(resSeg);
+                                batch.Clear();
+                                return;
+                            }
+                        }
+                        
+                        foreach (var c in batch) newPc.Append(c);
+                        batch.Clear();
+                    }
+
+                    for (int i = 0; i < pc.SegmentCount; i++)
+                    {
+                        Curve seg = pc.SegmentCurve(i);
+                        if (skipCheck(seg))
+                        {
+                            FlushBatch();
+                            newPc.Append(seg); 
+                        }
+                        else
+                        {
+                            batch.Add(seg);
+                        }
+                    }
+                    FlushBatch();
+                    
+                    if (modified && newPc.SegmentCount == 1) return (newPc.SegmentCurve(0), localDev);
+                    return (modified ? newPc : curve, localDev);
                 }
-                return (curve, 0.0);
+                else
+                {
+                    if (skipCheck(curve)) return (curve, 0.0);
+                    
+                    var nc = curve.ToNurbsCurve();
+                    if (nc == null) return (curve, 0.0);
+                    
+                    var result = SpanConversionUtils.ConvertBetweenKnots(nc, evaluator, tolByRatio, tolRatio, devTol, minLen, bulgeTol, onlySplitAtFullyMultipleKnots);
+                    if (result.HasValue)
+                    {
+                        localDev = result.Value.MaxDev;
+                        if (result.Value.Segments.Length == 1) return (result.Value.Segments[0], localDev);
+                        
+                        PolyCurve newPc = new PolyCurve();
+                        foreach (var resSeg in result.Value.Segments) newPc.Append(resSeg);
+                        return (newPc, localDev);
+                    }
+                    return (curve, 0.0);
+                }
             }
 
             // 1. CONVERT SPANS TO LINES
             if (doSpansToLines)
             {
                 SpanConversionUtils.CurveEvaluator lineEval = c => {
-                    var res = ConvertToLineLogic.GetLineCurve(c, distTol);
-                    return (res.lineCurve, res.deviation, res.log); 
+                    var evalRes = ConvertToLineLogic.GetLineCurve(c, lineTol, lineTol, 0.0); 
+                    return (evalRes.lineCurve, evalRes.deviation, evalRes.log); 
                 };
-                var res = ProcessSpans(currentCurve, lineEval, ConvertToLineOptions.TolByRatio, ConvertToLineOptions.TolRatio, distTol, ConvertToLineOptions.MinNewCrvLen);
-                currentCurve = res.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, res.Dev);
+                var spanRes = ProcessSpans(currentCurve, lineEval, c => c is LineCurve || c is PolylineCurve, ConvertToLineOptions.TolByRatio, ConvertToLineOptions.TolRatio, lineTol, minSegLen, 0.0, false);
+                currentCurve = spanRes.Curve;
+                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
             }
 
             // 2. CONVERT SPANS TO ARCS
             if (doSpansToArcs)
             {
                 SpanConversionUtils.CurveEvaluator arcEval = c => {
-                    var res = ConvertToArcLogic.GetArcCurve(c, distTol); 
-                    return (res.arcCurve, res.deviation, res.log); 
+                    var evalRes = ConvertToArcLogic.GetArcCurve(c, distTol, distTol, 0.0, true); 
+                    return (evalRes.arcCurve, evalRes.deviation, evalRes.log); 
                 };
-                var res = ProcessSpans(currentCurve, arcEval, ConvertToArcOptions.TolByRatio, ConvertToArcOptions.TolRatio, distTol, ConvertToArcOptions.MinNewCrvLen); 
-                currentCurve = res.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, res.Dev);
+                var spanRes = ProcessSpans(currentCurve, arcEval, c => c is LineCurve || c is PolylineCurve || c is ArcCurve, ConvertToArcOptions.TolByRatio, ConvertToArcOptions.TolRatio, distTol, minSegLen, arcBulgeTol, false); 
+                currentCurve = spanRes.Curve;
+                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
             }
 
-            // 3. ADJUST G1 (Evaluates raw NURBS spans before Bezier conversion)
-            if (doAdjustG1)
-            {
-                currentCurve = ApplyAdjustG1(currentCurve, g1DistTol, g1AngleTol);
-            }
+            // 3. ADJUST G1
+            if (doAdjustG1) currentCurve = ApplyAdjustG1(currentCurve, g1DistTol, g1AngleTol);
 
-            // 4. CONVERT SPANS TO BEZIERS
+            // 4. CONVERT SECTIONS TO BEZIERS
             if (doSpansToBeziers && targetDegrees != null && targetDegrees.Count > 0)
             {
                 SpanConversionUtils.CurveEvaluator bezierEval = c => {
-                    var res = ConvertToBezierLogic.TryConvert(c, targetDegrees, true, bezierDistTol, true, false, false, false, false, false);
-                    return (res.Bezier, res.Deviation, res.Log);
+                    var evalRes = ConvertToBezierLogic.TryConvert(c, targetDegrees, true, bezierDistTol, true, false, false, false, false, false);
+                    return (evalRes.Bezier, evalRes.Deviation, evalRes.Log);
                 };
-                var res = ProcessSpans(currentCurve, bezierEval, false, 0.0, bezierDistTol, 0.001); 
-                currentCurve = res.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, res.Dev);
+                var spanRes = ProcessSpans(currentCurve, bezierEval, c => c is LineCurve || c is PolylineCurve || c is ArcCurve, false, 0.0, bezierDistTol, minSegLen, 0.0, true); 
+                currentCurve = spanRes.Curve;
+                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
             }
 
-            // 5. SPLIT KNOTS 
-            if (doSplitAllKnots || doSplitFullyMultiple)
+            // 5. MAKE UNIFORM
+            if (doMakeUniform)
             {
-                currentCurve = SplitKnots(currentCurve, doSplitAllKnots, doSplitFullyMultiple);
+                SpanConversionUtils.CurveEvaluator uniformEval = c => {
+                    var evalRes = MakeUniformLogic.TryMakeUniform(c, true, uniformDistTol, true, false);
+                    return (evalRes.UniformCurve, evalRes.Deviation, evalRes.Log);
+                };
+                var spanRes = ProcessSpans(currentCurve, uniformEval, c => c is LineCurve || c is PolylineCurve || c is ArcCurve || (c is NurbsCurve n && n.SpanCount == 1), false, 0.0, uniformDistTol, minSegLen, 0.0, true); 
+                currentCurve = spanRes.Curve;
+                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
             }
 
-            // 6. POLYLINE OUTPUT
-            if (doPolylineOutput)
-            {
-                currentCurve = PolylineOutputLogic.Execute(currentCurve, true); 
-            }
+            // 6. SPLIT KNOTS 
+            if (doSplitAllKnots || doSplitFullyMultiple) currentCurve = SplitKnots(currentCurve, doSplitAllKnots, doSplitFullyMultiple);
+
+            // 7. POLYLINE OUTPUT
+            if (doPolylineOutput) currentCurve = PolylineOutputLogic.Execute(currentCurve, true); 
 
             int newSegs = (currentCurve is PolyCurve pcNew) ? pcNew.SegmentCount : 1;
             if (currentCurve is PolylineCurve) newSegs = 1; 
@@ -155,11 +221,19 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (splitParams.Count == 0) return curve;
 
-            var segments = curve.Split(splitParams);
-            if (segments == null || segments.Length <= 1) return curve;
+            List<double> tNodes = new List<double> { nc.Domain.Min };
+            var sortedSplits = new List<double>(splitParams);
+            sortedSplits.Sort();
+            tNodes.AddRange(sortedSplits);
+            tNodes.Add(nc.Domain.Max);
 
             PolyCurve resultPc = new PolyCurve();
-            foreach (var seg in segments) resultPc.Append(seg);
+            for (int i = 0; i < tNodes.Count - 1; i++)
+            {
+                Curve seg = nc.Trim(new Interval(tNodes[i], tNodes[i + 1]));
+                if (seg != null) resultPc.Append(seg);
+            }
+            
             return resultPc;
         }
 
@@ -172,7 +246,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 for (int i = 0; i < pc.SegmentCount; i++)
                 {
                     Curve seg = pc.SegmentCurve(i);
-                    bool isLineOrArc = seg is LineCurve || seg is ArcCurve || seg.IsLinear(distTol) || seg.IsArc(distTol);
+                    bool isLineOrArc = seg is LineCurve || seg is PolylineCurve || seg is ArcCurve;
                     bool isBezier = seg is NurbsCurve b && b.SpanCount == 1 && !b.IsRational;
                     
                     if (!isLineOrArc && !isBezier)
@@ -191,7 +265,7 @@ namespace CADacombs.Commands.Modeling.Curves
             }
             else
             {
-                bool isLineOrArc = curve is LineCurve || curve is ArcCurve || curve.IsLinear(distTol) || curve.IsArc(distTol);
+                bool isLineOrArc = curve is LineCurve || curve is PolylineCurve || curve is ArcCurve;
                 bool isBezier = curve is NurbsCurve b && b.SpanCount == 1 && !b.IsRational;
                 
                 if (!isLineOrArc && !isBezier) return curve.Simplify(CurveSimplifyOptions.AdjustG1, distTol, angleTol) ?? curve;

@@ -10,12 +10,11 @@ namespace CADacombs.Commands.Modeling.Curves
 {
     public static class ConvertToLineLogic
     {
-        /// <summary>
-        /// Evaluates a single curve or edge and attempts to convert it to a LineCurve.
-        /// </summary>
         public static (LineCurve lineCurve, double deviation, string log) GetLineCurve(
             GeometryBase geom, 
-            double docTol)
+            double docTol,
+            double? overrideDevTol = null,
+            double? overrideMinLen = null)
         {
             if (geom == null)
                 return (null, 0.0, "Geometry not found! It will be skipped.");
@@ -48,14 +47,16 @@ namespace CADacombs.Commands.Modeling.Curves
             var lineCurve = new LineCurve(crv.PointAtStart, crv.PointAtEnd);
             double lineLength = lineCurve.GetLength();
 
-            if (lineLength < ConvertToLineOptions.MinNewCrvLen)
+            double minLen = overrideMinLen ?? ConvertToLineOptions.MinNewCrvLen;
+            if (lineLength < minLen)
                 return (null, 0.0, "Curve is too short.");
 
             bool success = Rhino.Geometry.Curve.GetDistancesBetweenCurves(crv, lineCurve, docTol, out double maxDev, out _, out _, out _, out _, out _);
             if (!success)
                 return (null, 0.0, "Deviation could not be determined by GetDistancesBetweenCurves.");
 
-            // Evaluate tolerance criteria
+            double devTol = overrideDevTol ?? ConvertToLineOptions.DevTol;
+
             if (ConvertToLineOptions.TolByRatio)
             {
                 double ratio = maxDev > 0.0 ? lineLength / maxDev : double.MaxValue;
@@ -64,16 +65,13 @@ namespace CADacombs.Commands.Modeling.Curves
             }
             else
             {
-                if (maxDev > ConvertToLineOptions.DevTol)
-                    return (null, maxDev, $"Required tolerance ({maxDev:E3}) exceeds maximum allowed deviation ({ConvertToLineOptions.DevTol:E3}).");
+                if (maxDev > devTol)
+                    return (null, maxDev, $"Required tolerance ({maxDev:E3}) exceeds maximum allowed deviation ({devTol:E3}).");
             }
 
             return (lineCurve, maxDev, null);
         }
 
-        /// <summary>
-        /// Processes selected document objects, converting qualifying curves to LineCurves.
-        /// </summary>
         public static Result Execute(RhinoDoc doc, ObjRef[] objRefs)
         {
             var devs = new List<double>();
@@ -113,7 +111,6 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
             }
 
-            // Reporting output
             if (ConvertToLineOptions.Echo)
             {
                 var uniqueLogs = new HashSet<string>(logs);

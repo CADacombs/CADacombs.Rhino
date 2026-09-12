@@ -18,6 +18,8 @@ namespace CADacombs.Commands.Modeling.Curves
         public bool HighlightLines { get; set; } = true;
         public bool HighlightArcs { get; set; } = true;
 
+        public int PreviewThickness {get; set; } = 5;
+
         // Default tolerances for the conduit preview
         private double _distTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
         private double _g1AngleTolDeg = RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
@@ -166,13 +168,13 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (isLineSegment && HighlightLines)
             {
-                e.Display.DrawCurve(seg, Color.LimeGreen, 4);
+                e.Display.DrawCurve(seg, Color.LimeGreen, PreviewThickness);
             }
             else if (isArcSegment && HighlightArcs)
             {
                 // Utilize Rhino's native feedback color for arc previews
                 Color feedbackColor = Rhino.ApplicationSettings.AppearanceSettings.FeedbackColor;
-                e.Display.DrawCurve(seg, feedbackColor, 4);
+                e.Display.DrawCurve(seg, feedbackColor, PreviewThickness);
             }
             else
             {

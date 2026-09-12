@@ -8,185 +8,165 @@ namespace CADacombs.Core.Curves
 {
     public static class SpanConversionUtils
     {
-        /// <summary>
-        /// A delegate defining how to evaluate and convert a curve segment.
-        /// It should return the converted geometry, the calculated deviation, and a log string if it fails.
-        /// </summary>
         public delegate (Curve Converted, double Deviation, string Log) CurveEvaluator(Curve input);
 
-        /// <summary>
-        /// A generic greedy-expansion routine that finds the longest possible valid continuous 
-        /// spans between knots and converts them using the provided evaluator delegate.
-        /// </summary>
+        private class Block
+        {
+            public int StartIdx { get; set; }
+            public int EndIdx { get; set; }
+            public bool IsValid { get; set; }
+            public Curve ConvertedCurve { get; set; }
+            public double Dev { get; set; }
+        }
+
         public static (Curve[] Segments, double MaxDev)? ConvertBetweenKnots(
             NurbsCurve ncIn,
             CurveEvaluator evaluator,
             bool tolByRatio,
             double tolRatio,
             double devTol,
-            double minNewCrvLen)
+            double minNewCrvLen,
+            double arcBulgeTol,
+            bool onlySplitAtFullyMultipleKnots)
         {
             if (ncIn == null) return null;
 
-            // 1. Identify strictly interior split parameters based on Rhino's knot array
-            List<double> interiorSplits = new List<double>();
+            List<double> tNodesList = new List<double> { ncIn.Domain.Min };
+
             for (int k = ncIn.Degree; k < ncIn.Knots.Count - ncIn.Degree; k++)
             {
                 double t = ncIn.Knots[k];
-                if (!interiorSplits.Contains(t)) interiorSplits.Add(t);
+                if (onlySplitAtFullyMultipleKnots)
+                {
+                    if (ncIn.Knots.KnotMultiplicity(k) < ncIn.Degree) continue; 
+                }
+                if (!tNodesList.Contains(t)) tNodesList.Add(t);
             }
 
-            // 2. Split into atomic segments
-            Curve[] atomicSegs;
-            if (interiorSplits.Count == 0)
+            if (!tNodesList.Contains(ncIn.Domain.Max)) tNodesList.Add(ncIn.Domain.Max);
+            double[] tNodes = tNodesList.ToArray();
+
+            Curve[] atomicSegs = new Curve[tNodes.Length - 1];
+            for (int i = 0; i < atomicSegs.Length; i++)
             {
-                // The curve is already a single span
-                atomicSegs = new Curve[] { ncIn };
-            }
-            else
-            {
-                atomicSegs = ncIn.Split(interiorSplits);
-                if (atomicSegs == null || atomicSegs.Length == 0) return null;
+                atomicSegs[i] = ncIn.Trim(new Interval(tNodes[i], tNodes[i + 1]));
             }
 
-            // 3. Build parametric nodes (equivalent to the old tsKnots, but guaranteed safe)
-            double[] tNodes = new double[atomicSegs.Length + 1];
-            tNodes[0] = atomicSegs[0].Domain.Min;
-            for (int i = 0; i < atomicSegs.Length; i++) 
-            {
-                tNodes[i + 1] = atomicSegs[i].Domain.Max;
-            }
-
-            // 4. Test each atomic segment to identify viable starting points
             bool[] isSegWithinTol = new bool[atomicSegs.Length];
             for (int i = 0; i < atomicSegs.Length; i++)
             {
+                if (atomicSegs[i] == null) continue;
                 var eval = evaluator(atomicSegs[i]);
-                if (eval.Converted != null && IsWithinDeviationTolerance(atomicSegs[i], eval.Converted, eval.Deviation, tolByRatio, tolRatio, devTol))
-                {
-                    isSegWithinTol[i] = true;
-                }
-                else
-                {
-                    isSegWithinTol[i] = false;
-                }
+                isSegWithinTol[i] = (eval.Converted != null && IsWithinDeviationTolerance(atomicSegs[i], eval.Converted, eval.Deviation, tolByRatio, tolRatio, devTol));
             }
 
-            if (!isSegWithinTol.Contains(true))
-                return null; 
+            if (!isSegWithinTol.Contains(true)) return null; 
 
-            // 5. Greedy Expansion Loop
-            List<int> validNodeIndices = new List<int>();
+            List<Block> blocks = new List<Block>();
             int segIdx = 0;
 
             while (segIdx < atomicSegs.Length)
             {
-                RhinoApp.Wait(); // Keeps Rhino responsive during tight loops
+                RhinoApp.Wait(); 
 
-                if (!isSegWithinTol[segIdx])
+                if (!isSegWithinTol[segIdx] || atomicSegs[segIdx] == null)
                 {
+                    blocks.Add(new Block { StartIdx = segIdx, EndIdx = segIdx + 1, IsValid = false, ConvertedCurve = atomicSegs[segIdx], Dev = 0.0 });
                     segIdx++;
                     continue;
                 }
 
                 int j;
                 Curve lastValidSeg = null;
+                double lastValidDev = 0.0;
 
-                for (j = segIdx; j < isSegWithinTol.Length; j++)
+                for (j = segIdx; j < atomicSegs.Length; j++)
                 {
-                    if (!isSegWithinTol[j])
-                    {
-                        j--;
-                        break;
-                    }
+                    if (!isSegWithinTol[j] || atomicSegs[j] == null) break;
 
-                    double t0 = tNodes[segIdx];
-                    double t1 = tNodes[j + 1];
-
-                    // Safely extract the continuous sub-curve
-                    Curve concatSeg = (segIdx == 0 && j == atomicSegs.Length - 1) 
-                        ? ncIn 
-                        : ncIn.Trim(new Interval(t0, t1));
-
-                    if (concatSeg == null) 
-                    {
-                        j--; 
-                        break; 
-                    }
+                    Curve concatSeg = ncIn.Trim(new Interval(tNodes[segIdx], tNodes[j + 1]));
+                    if (concatSeg == null) break; 
 
                     var eval = evaluator(concatSeg);
                     if (eval.Converted != null && IsWithinDeviationTolerance(concatSeg, eval.Converted, eval.Deviation, tolByRatio, tolRatio, devTol))
                     {
                         lastValidSeg = eval.Converted;
-                        continue; 
+                        lastValidDev = eval.Deviation;
                     }
-                    else
-                    {
-                        // Failed to expand further, revert to the last successful segment
-                        j--; 
-                        break;
-                    }
+                    else break;
                 }
 
                 if (lastValidSeg != null)
                 {
-                    double linearDist = lastValidSeg.PointAtStart.DistanceTo(lastValidSeg.PointAtEnd);
-                    if (linearDist >= minNewCrvLen)
+                    // Fixed Indexing: Maps strictly to j without overflowing
+                    blocks.Add(new Block { StartIdx = segIdx, EndIdx = j, IsValid = true, ConvertedCurve = lastValidSeg, Dev = lastValidDev });
+                    segIdx = j;
+                }
+                else
+                {
+                    blocks.Add(new Block { StartIdx = segIdx, EndIdx = segIdx + 1, IsValid = false, ConvertedCurve = atomicSegs[segIdx], Dev = 0.0 });
+                    segIdx++;
+                }
+            }
+
+            // Closed Curve Seam Healing
+            if (ncIn.IsClosed && blocks.Count > 1 && blocks[0].IsValid && blocks[blocks.Count - 1].IsValid)
+            {
+                Curve startOriginal = ncIn.Trim(new Interval(tNodes[blocks[0].StartIdx], tNodes[blocks[0].EndIdx]));
+                Curve endOriginal = ncIn.Trim(new Interval(tNodes[blocks[blocks.Count - 1].StartIdx], tNodes[blocks[blocks.Count - 1].EndIdx]));
+                
+                if (startOriginal != null && endOriginal != null)
+                {
+                    var joined = Curve.JoinCurves(new[] { endOriginal, startOriginal });
+                    if (joined != null && joined.Length == 1)
                     {
-                        if (!validNodeIndices.Contains(segIdx)) validNodeIndices.Add(segIdx);
-                        if (!validNodeIndices.Contains(j + 1)) validNodeIndices.Add(j + 1);
+                        var eval = evaluator(joined[0]);
+                        if (eval.Converted != null && IsWithinDeviationTolerance(joined[0], eval.Converted, eval.Deviation, tolByRatio, tolRatio, devTol))
+                        {
+                            blocks[0].StartIdx = blocks[blocks.Count - 1].StartIdx;
+                            blocks[0].ConvertedCurve = eval.Converted;
+                            blocks[0].Dev = eval.Deviation;
+                            blocks.RemoveAt(blocks.Count - 1);
+                        }
                     }
                 }
-
-                segIdx = j + 1; // Move past the processed block
             }
 
-            if (validNodeIndices.Count == 0) return null;
-
-            validNodeIndices.Sort();
-
-            // 6. Final Split based exclusively on interior valid boundaries
-            List<double> finalInteriorSplits = new List<double>();
-            foreach (int idx in validNodeIndices)
-            {
-                // Prevent passing Domain Min/Max into Rhino's Split algorithm
-                if (idx > 0 && idx < tNodes.Length - 1)
-                {
-                    finalInteriorSplits.Add(tNodes[idx]);
-                }
-            }
-
-            Curve[] finalSplitSegs;
-            if (finalInteriorSplits.Count == 0)
-            {
-                finalSplitSegs = new Curve[] { ncIn };
-            }
-            else
-            {
-                finalSplitSegs = ncIn.Split(finalInteriorSplits);
-            }
-
-            if (finalSplitSegs == null || finalSplitSegs.Length == 0) return null;
-
-            // 7. Evaluate and build the final segments array
             List<Curve> finalSegments = new List<Curve>();
             List<double> tolsUsed = new List<double>();
 
-            foreach (var seg in finalSplitSegs)
+            foreach (var block in blocks)
             {
-                var eval = evaluator(seg);
-                if (eval.Converted != null && IsWithinDeviationTolerance(seg, eval.Converted, eval.Deviation, tolByRatio, tolRatio, devTol))
+                // Final Threshold Checks applied ONLY to the fully assembled segments
+                bool accept = block.IsValid && block.ConvertedCurve.GetLength() >= minNewCrvLen;
+
+                if (accept && arcBulgeTol > 0.0 && block.ConvertedCurve is ArcCurve arc)
                 {
-                    if (eval.Converted.GetLength() >= minNewCrvLen)
-                    {
-                        finalSegments.Add(eval.Converted);
-                        tolsUsed.Add(eval.Deviation);
-                        continue;
-                    }
+                    double sagitta = arc.Radius * (1.0 - Math.Cos(arc.AngleRadians / 2.0));
+                    if (sagitta < arcBulgeTol) accept = false;
                 }
-                
-                // Add unconverted segment as fallback
-                finalSegments.Add(seg);
+
+                if (accept)
+                {
+                    finalSegments.Add(block.ConvertedCurve);
+                    tolsUsed.Add(block.Dev);
+                }
+                else
+                {
+                    Curve fallback;
+                    if (block.StartIdx > block.EndIdx) // It wrapped across the seam
+                    {
+                        Curve p1 = ncIn.Trim(new Interval(tNodes[block.StartIdx], tNodes[tNodes.Length - 1]));
+                        Curve p2 = ncIn.Trim(new Interval(tNodes[0], tNodes[block.EndIdx]));
+                        fallback = Curve.JoinCurves(new[] { p1, p2 })?[0] ?? p1;
+                    }
+                    else
+                    {
+                        fallback = ncIn.Trim(new Interval(tNodes[block.StartIdx], tNodes[block.EndIdx]));
+                    }
+                    
+                    if (fallback != null) finalSegments.Add(fallback);
+                }
             }
 
             double maxDev = tolsUsed.Count > 0 ? tolsUsed.Max() : 0.0;
