@@ -15,6 +15,7 @@ namespace CADacombs.Core
         // ----------------------------------------------------
         // Control Dictionaries
         // ----------------------------------------------------
+        protected Button btnUpgrade;
         protected Dictionary<string, Label> labels = new Dictionary<string, Label>();
         protected Dictionary<string, CheckBox> checkBoxes = new Dictionary<string, CheckBox>();
         protected Dictionary<string, RadioButtonList> radioButtonLists = new Dictionary<string, RadioButtonList>();
@@ -84,6 +85,9 @@ namespace CADacombs.Core
             Font smallFont = new Font(SystemFont.Default, 4);
 
             string[] contList = { "None", "G0", "G1", "G2", "G3" };
+
+            btnUpgrade = new Button { Visible = false };
+            btnUpgrade.Click += OnUpgradeClicked;
             
             // Radio button Spacing kept at 8 to maintain visual grouping without blowing out the width
             radioButtonLists["idxCont_Picked"] = new RadioButtonList { Spacing = new Size(8, 4) };
@@ -96,7 +100,7 @@ namespace CADacombs.Core
             radioButtonLists["idxCont_Opp"].DataStore = contList;
             radioButtonLists["idxCont_Opp"].SelectedIndex = EndBulgeOptions.ContinuityOpp;
             radioButtonLists["idxCont_Opp"].SelectedIndexChanged += OnContinuityChanged;
-            labels["idxCont_Opp"] = new Label { Text = $"Opp. {termLow}:" };
+            labels["idxCont_Opp"] = new Label { Text = $"Opp {termLow}:" };
 
             radioButtonLists["bLinkedEnds"] = new RadioButtonList { Orientation = Orientation.Horizontal, Spacing = new Size(16, 4) };
             radioButtonLists["bLinkedEnds"].DataStore = new[] { "Independent", "Linked" };
@@ -233,7 +237,14 @@ namespace CADacombs.Core
             root.Items.Add(new Label { Height = 2 });
 
             // 2. MATHEMATICAL CONSTRAINTS
-            root.Items.Add(new Label { Text = "Continuity Constraints", Font = new Font(SystemFont.Bold, 10) });
+            var lblCont = new Label { Text = "Continuity Constraints", Font = new Font(SystemFont.Bold, 10) };
+            var contHeader = new StackLayout { 
+                Orientation = Orientation.Horizontal, 
+                Spacing = 10, 
+                VerticalContentAlignment = VerticalAlignment.Center, 
+                Items = { lblCont, btnUpgrade } 
+            };
+            root.Items.Add(contHeader);
             var contGrid = new TableLayout { Spacing = new Size(4, 4) };
             contGrid.Rows.Add(new TableRow(labels["idxCont_Picked"], radioButtonLists["idxCont_Picked"], new TableCell { ScaleWidth = true }));
             contGrid.Rows.Add(new TableRow(labels["idxCont_Opp"], radioButtonLists["idxCont_Opp"], new TableCell { ScaleWidth = true }));
@@ -331,6 +342,9 @@ namespace CADacombs.Core
             AutoSize = true;
             Resizable = false;
         }
+
+        protected virtual void OnUpgradeClicked(object sender, EventArgs e) { }
+        
         protected void OnResetValuesClick(object sender, EventArgs e)
         {
             // Temporarily pause auto-updating so we don't trigger 6 separate preview recalculations

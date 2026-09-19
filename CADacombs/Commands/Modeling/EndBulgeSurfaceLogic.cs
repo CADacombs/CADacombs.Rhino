@@ -74,11 +74,14 @@ namespace CADacombs.Commands.Modeling
             var conduit = new EndBulgeSurfaceConduit();
             dialog.BaseConduit = conduit;
 
+            // --- FIXED: Suspend undo tracking during initial preview hide ---
+            bool prevUndo = doc.UndoRecordingEnabled;
+            doc.UndoRecordingEnabled = false;
             dialog.UpdatePreview();
+            doc.UndoRecordingEnabled = prevUndo;
+
             conduit.Enabled = true;
             doc.Views.Redraw();
-
-            uint undoSn = doc.BeginUndoRecord("EndBulge Srf");
 
             try
             {
@@ -86,28 +89,36 @@ namespace CADacombs.Commands.Modeling
 
                 if (dialog.DialogOk && conduit.Surface != null)
                 {
+                    // Only record the final user-approved bake
+                    uint undoSn = doc.BeginUndoRecord("EndBulge Srf");
                     ProcessBrepObject(doc, objRef, conduit.Surface, dialog.OriginalGeom);
+                    doc.EndUndoRecord(undoSn);
                 }
                 else
                 {
+                    doc.UndoRecordingEnabled = false;
                     ReplaceAndPreserveModes(doc, objRef.ObjectId, dialog.OriginalGeom);
                     doc.Objects.Show(objRef.ObjectId, true);
+                    doc.UndoRecordingEnabled = prevUndo;
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 RhinoApp.WriteLine($"Script Error Encountered: {ex.Message}");
+#endif
+                doc.UndoRecordingEnabled = false;
                 ReplaceAndPreserveModes(doc, objRef.ObjectId, dialog.OriginalGeom);
                 doc.Objects.Show(objRef.ObjectId, true);
+                doc.UndoRecordingEnabled = prevUndo;
             }
             finally
             {
                 conduit.Enabled = false;
-                doc.EndUndoRecord(undoSn);
                 doc.Views.Redraw();
             }
 
-            return Result.Success;
+            return dialog.DialogOk ? Result.Success : Result.Cancel;
         }
 
         public static bool ReplaceAndPreserveModes(RhinoDoc doc, Guid objId, Brep newGeom)

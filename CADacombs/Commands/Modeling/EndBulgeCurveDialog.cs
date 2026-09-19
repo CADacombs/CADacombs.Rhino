@@ -24,47 +24,81 @@ namespace CADacombs.Commands.Modeling
             if (_ncIn != null)
             {
                 BaseConduit = new EndBulgeConduit();
-                
-                int N = _ncIn.Points.Count;
-
-                // --- NEW: Strict Initial UI Clamping ---
-                // Force the radio buttons to respect N/2 before the UI renders.
-                // This prevents the dialog from hoarding points on startup.
-                bool prevAuto = _autoUpdating;
-                _autoUpdating = true; // Suspend preview updates during init
-
-                if (radioButtonLists["idxCont_Picked"].SelectedIndex > N / 2)
-                    radioButtonLists["idxCont_Picked"].SelectedIndex = N / 2;
-
-                if (radioButtonLists["idxCont_Opp"].SelectedIndex > N / 2)
-                    radioButtonLists["idxCont_Opp"].SelectedIndex = N / 2;
-
-                _autoUpdating = prevAuto;
-                // ---------------------------------------
-                
-                // Restrict G3 continuity if the curve topology doesn't mathematically support it
-                _ncIn.ClosestPoint(_objRef.SelectionPoint(), out double t_AtPicked);
-                bool pickedIsT1 = t_AtPicked > _ncIn.Domain.Mid;
-                
-                bool canG3Picked = EndBulgeMath.CanMaintainG3(_ncIn, pickedIsT1);
-                bool canG3Opp = EndBulgeMath.CanMaintainG3(_ncIn, !pickedIsT1);
-
-                if (!canG3Picked)
-                {
-                    radioButtonLists["idxCont_Picked"].DataStore = new[] { "None", "G0", "G1", "G2" };
-                    if (EndBulgeOptions.ContinuityPicked == 4) 
-                        radioButtonLists["idxCont_Picked"].SelectedIndex = 3;
-                }
-                
-                if (!canG3Opp)
-                {
-                    radioButtonLists["idxCont_Opp"].DataStore = new[] { "None", "G0", "G1", "G2" };
-                    if (EndBulgeOptions.ContinuityOpp == 4) 
-                        radioButtonLists["idxCont_Opp"].SelectedIndex = 3;
-                }
-
-                UpdateControlStates();
+                RefreshTopologyLimits();
             }
+        }
+
+        protected override void OnUpgradeClicked(object sender, EventArgs e)
+        {
+            int currentDeg = _ncIn.Degree;
+            int newDeg = currentDeg % 2 == 0 ? currentDeg + 1 : currentDeg + 2;
+            
+            _ncIn.IncreaseDegree(newDeg);
+            RefreshTopologyLimits();
+            
+            // --- NEW: Auto-upgrade continuity to highest available (N/2) ---
+            int maxSafeCont = _ncIn.Points.Count / 2;
+            bool prevAuto = _autoUpdating;
+            _autoUpdating = true;
+            radioButtonLists["idxCont_Picked"].SelectedIndex = maxSafeCont;
+            radioButtonLists["idxCont_Opp"].SelectedIndex = maxSafeCont;
+            _autoUpdating = prevAuto;
+            // ---------------------------------------------------------------
+            
+            UpdateControlStates();
+            UpdatePreview();
+        }
+
+        private void RefreshTopologyLimits()
+        {
+            int N = _ncIn.Points.Count;
+            int currentDeg = _ncIn.Degree;
+
+            // Button Logic
+            if (currentDeg >= 7)
+            {
+                btnUpgrade.Visible = false;
+            }
+            else
+            {
+                btnUpgrade.Visible = true;
+                int nextDeg = currentDeg % 2 == 0 ? currentDeg + 1 : currentDeg + 2;
+                // Add leading/trailing spaces for 5px visual padding in Eto
+                btnUpgrade.Text = $"  Upgrade to Deg {nextDeg}  "; 
+            }
+
+            // Strict N/2 Clamping
+            bool prevAuto = _autoUpdating;
+            _autoUpdating = true; 
+
+            if (radioButtonLists["idxCont_Picked"].SelectedIndex > N / 2)
+                radioButtonLists["idxCont_Picked"].SelectedIndex = N / 2;
+
+            if (radioButtonLists["idxCont_Opp"].SelectedIndex > N / 2)
+                radioButtonLists["idxCont_Opp"].SelectedIndex = N / 2;
+            
+            _ncIn.ClosestPoint(_objRef.SelectionPoint(), out double t_AtPicked);
+            bool pickedIsT1 = t_AtPicked > _ncIn.Domain.Mid;
+            
+            bool canG3Picked = EndBulgeMath.CanMaintainG3(_ncIn, pickedIsT1);
+            bool canG3Opp = EndBulgeMath.CanMaintainG3(_ncIn, !pickedIsT1);
+
+            int pIdx = radioButtonLists["idxCont_Picked"].SelectedIndex;
+            int oIdx = radioButtonLists["idxCont_Opp"].SelectedIndex;
+
+            radioButtonLists["idxCont_Picked"].DataStore = canG3Picked 
+                ? new[] { "None", "G0", "G1", "G2", "G3" } 
+                : new[] { "None", "G0", "G1", "G2" };
+                
+            radioButtonLists["idxCont_Opp"].DataStore = canG3Opp 
+                ? new[] { "None", "G0", "G1", "G2", "G3" } 
+                : new[] { "None", "G0", "G1", "G2" };
+
+            radioButtonLists["idxCont_Picked"].SelectedIndex = Math.Min(pIdx, canG3Picked ? 4 : 3);
+            radioButtonLists["idxCont_Opp"].SelectedIndex = Math.Min(oIdx, canG3Opp ? 4 : 3);
+
+            _autoUpdating = prevAuto;
+            UpdateControlStates();
         }
 
         public override void UpdatePreview()

@@ -49,41 +49,54 @@ namespace CADacombs.Commands.Modeling
             var parent = RhinoEtoApp.MainWindowForDocument(doc);
             var dialog = new EndBulgeCurveDialog(objRef);
 
+            // --- FIXED: Suspend undo tracking for temporary UI locking ---
+            bool prevUndo = doc.UndoRecordingEnabled;
+            doc.UndoRecordingEnabled = false;
             doc.Objects.Lock(objRef.ObjectId, true);
+            doc.UndoRecordingEnabled = prevUndo;
 
             dialog.UpdatePreview();
             dialog.BaseConduit.Enabled = true;
             doc.Views.Redraw();
 
-            uint undoSn = doc.BeginUndoRecord("EndBulge Crv");
-
             try
             {
                 dialog.ShowSemiModal(doc, parent);
 
+                doc.UndoRecordingEnabled = false;
                 if (!EndBulgeOptions.Debug) doc.Views.RedrawEnabled = false;
                 doc.Objects.UnselectAll();
                 doc.Objects.Unlock(objRef.ObjectId, true);
+                doc.UndoRecordingEnabled = prevUndo;
 
                 if (dialog.DialogOk && dialog.BaseConduit.Crv != null)
                 {
+                    // Only create the undo record for the actual geometry modification
+                    uint undoSn = doc.BeginUndoRecord("EndBulge Crv");
                     ProcessCurveObject(doc, objRef, dialog.BaseConduit.Crv);
+                    doc.EndUndoRecord(undoSn);
                 }
             }
             catch (Exception ex)
             {
+#if DEBUG
                 RhinoApp.WriteLine($"Script Error Encountered: {ex.Message}");
+#endif
             }
             finally
             {
                 dialog.BaseConduit.Enabled = false;
+                
+                // Safety unlock in case an exception fired early
+                doc.UndoRecordingEnabled = false;
                 doc.Objects.Unlock(objRef.ObjectId, true);
-                doc.EndUndoRecord(undoSn);
+                doc.UndoRecordingEnabled = prevUndo;
+                
                 doc.Views.RedrawEnabled = true;
                 doc.Views.Redraw();
             }
 
-            return Result.Success;
+            return dialog.DialogOk ? Result.Success : Result.Cancel;
         }
 
         private static bool ProcessCurveObject(RhinoDoc doc, ObjRef objRef, NurbsCurve precalcCurve)

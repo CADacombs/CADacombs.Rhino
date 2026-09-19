@@ -25,10 +25,8 @@ namespace CADacombs.Commands.Modeling
             var face = edge.Brep.Faces[edge.AdjacentFaces()[0]];
             _nsIn = face.ToNurbsSurface();
 
-            // GUARANTEED BACKUP: Explicitly pull the Brep geometry to prevent extracting the 1D Edge Curve
             OriginalGeom = objRef.Brep().DuplicateBrep();
 
-            // Find Boundary
             double tMid = edge.Domain.Mid;
             Point3d ptMid = edge.PointAt(tMid);
             face.ClosestPoint(ptMid, out double u, out double v);
@@ -48,53 +46,98 @@ namespace CADacombs.Commands.Modeling
             else if (minD == dV0) _boundary = "V0";
             else _boundary = "V1";
 
+            RefreshTopologyLimits();
+        }
+
+        protected override void OnUpgradeClicked(object sender, EventArgs e)
+        {
+            int currentDeg = (_boundary == "U0" || _boundary == "U1") ? _nsIn.OrderU - 1 : _nsIn.OrderV - 1;
+            int newDeg = currentDeg % 2 == 0 ? currentDeg + 1 : currentDeg + 2;
+            
+            if (_boundary == "U0" || _boundary == "U1")
+                _nsIn.IncreaseDegreeU(newDeg);
+            else
+                _nsIn.IncreaseDegreeV(newDeg);
+
+            RefreshTopologyLimits();
+            
+            // --- NEW: Auto-upgrade continuity to highest available (N/2) ---
             NurbsCurve tempCurve;
             if (_boundary == "U0" || _boundary == "U1")
                 tempCurve = EndBulgeSurfaceLogic.ExtractTempCurve(_nsIn, 'U', 0);
             else
                 tempCurve = EndBulgeSurfaceLogic.ExtractTempCurve(_nsIn, 'V', 0);
 
-            // Establish Continuity UI Limits based on the temporary curve
             if (tempCurve != null)
             {
-                int N = tempCurve.Points.Count;
-
-                #if DEBUG
-                RhinoApp.WriteLine($"[DEBUG DIALOG] tempCurve N calculated as: {N}");
-                #endif
-
-                // --- NEW: Strict Initial UI Clamping ---
+                int maxSafeCont = tempCurve.Points.Count / 2;
                 bool prevAuto = _autoUpdating;
-                _autoUpdating = true; 
-
-                if (radioButtonLists["idxCont_Picked"].SelectedIndex > N / 2)
-                    radioButtonLists["idxCont_Picked"].SelectedIndex = N / 2;
-
-                if (radioButtonLists["idxCont_Opp"].SelectedIndex > N / 2)
-                    radioButtonLists["idxCont_Opp"].SelectedIndex = N / 2;
-
+                _autoUpdating = true;
+                radioButtonLists["idxCont_Picked"].SelectedIndex = maxSafeCont;
+                radioButtonLists["idxCont_Opp"].SelectedIndex = maxSafeCont;
                 _autoUpdating = prevAuto;
-                // ---------------------------------------
+            }
+            // ---------------------------------------------------------------
 
-                bool pickedIsT1 = (_boundary == "U1" || _boundary == "V1");
-                bool canG3Picked = EndBulgeMath.CanMaintainG3(tempCurve, pickedIsT1);
-                bool canG3Opp = EndBulgeMath.CanMaintainG3(tempCurve, !pickedIsT1);
+            UpdateControlStates();
+            UpdatePreview();
+        }
 
-                if (!canG3Picked)
-                {
-                    radioButtonLists["idxCont_Picked"].DataStore = new[] { "None", "G0", "G1", "G2" };
-                    if (EndBulgeOptions.ContinuityPicked == 4) 
-                        radioButtonLists["idxCont_Picked"].SelectedIndex = 3;
-                }
-                
-                if (!canG3Opp)
-                {
-                    radioButtonLists["idxCont_Opp"].DataStore = new[] { "None", "G0", "G1", "G2" };
-                    if (EndBulgeOptions.ContinuityOpp == 4) 
-                        radioButtonLists["idxCont_Opp"].SelectedIndex = 3;
-                }
+        private void RefreshTopologyLimits()
+        {
+            NurbsCurve tempCurve;
+            if (_boundary == "U0" || _boundary == "U1")
+                tempCurve = EndBulgeSurfaceLogic.ExtractTempCurve(_nsIn, 'U', 0);
+            else
+                tempCurve = EndBulgeSurfaceLogic.ExtractTempCurve(_nsIn, 'V', 0);
+
+            if (tempCurve == null) return;
+
+            int N = tempCurve.Points.Count;
+            int currentDeg = tempCurve.Degree;
+
+            // Button Logic
+            if (currentDeg >= 7)
+            {
+                btnUpgrade.Visible = false;
+            }
+            else
+            {
+                btnUpgrade.Visible = true;
+                int nextDeg = currentDeg % 2 == 0 ? currentDeg + 1 : currentDeg + 2;
+                // Add leading/trailing spaces for 5px visual padding in Eto
+                btnUpgrade.Text = $"  Upgrade to Deg {nextDeg}  "; 
             }
 
+            // Strict N/2 Clamping
+            bool prevAuto = _autoUpdating;
+            _autoUpdating = true; 
+
+            if (radioButtonLists["idxCont_Picked"].SelectedIndex > N / 2)
+                radioButtonLists["idxCont_Picked"].SelectedIndex = N / 2;
+
+            if (radioButtonLists["idxCont_Opp"].SelectedIndex > N / 2)
+                radioButtonLists["idxCont_Opp"].SelectedIndex = N / 2;
+
+            bool pickedIsT1 = (_boundary == "U1" || _boundary == "V1");
+            bool canG3Picked = EndBulgeMath.CanMaintainG3(tempCurve, pickedIsT1);
+            bool canG3Opp = EndBulgeMath.CanMaintainG3(tempCurve, !pickedIsT1);
+
+            int pIdx = radioButtonLists["idxCont_Picked"].SelectedIndex;
+            int oIdx = radioButtonLists["idxCont_Opp"].SelectedIndex;
+
+            radioButtonLists["idxCont_Picked"].DataStore = canG3Picked 
+                ? new[] { "None", "G0", "G1", "G2", "G3" } 
+                : new[] { "None", "G0", "G1", "G2" };
+                
+            radioButtonLists["idxCont_Opp"].DataStore = canG3Opp 
+                ? new[] { "None", "G0", "G1", "G2", "G3" } 
+                : new[] { "None", "G0", "G1", "G2" };
+
+            radioButtonLists["idxCont_Picked"].SelectedIndex = Math.Min(pIdx, canG3Picked ? 4 : 3);
+            radioButtonLists["idxCont_Opp"].SelectedIndex = Math.Min(oIdx, canG3Opp ? 4 : 3);
+
+            _autoUpdating = prevAuto;
             UpdateControlStates();
         }
 
@@ -220,8 +263,13 @@ namespace CADacombs.Commands.Modeling
             else
                 conduit.CgCurves.Clear();
 
-            // Hide the document object while actively sliding (Conduit takes over)
+            // --- FIXED: Suspend Undo during live preview hiding ---
+            bool prevUndo = RhinoDoc.ActiveDoc.UndoRecordingEnabled;
+            RhinoDoc.ActiveDoc.UndoRecordingEnabled = false;
             RhinoDoc.ActiveDoc.Objects.Hide(_objRef.ObjectId, true);
+            RhinoDoc.ActiveDoc.UndoRecordingEnabled = prevUndo;
+            // ------------------------------------------------------
+
             conduit.IsSwapped = false;
             RhinoDoc.ActiveDoc.Views.Redraw();
 
@@ -236,10 +284,17 @@ namespace CADacombs.Commands.Modeling
 
             if (conduit != null && conduit.IsSwapped)
             {
+                // --- FIXED: Suspend Undo during live preview swaps ---
+                bool prevUndo = RhinoDoc.ActiveDoc.UndoRecordingEnabled;
+                RhinoDoc.ActiveDoc.UndoRecordingEnabled = false;
+                
                 if (checkBoxes["bShowGeom"].Checked == true)
                     RhinoDoc.ActiveDoc.Objects.Show(_objRef.ObjectId, true);
                 else
                     RhinoDoc.ActiveDoc.Objects.Hide(_objRef.ObjectId, true);
+                    
+                RhinoDoc.ActiveDoc.UndoRecordingEnabled = prevUndo;
+                // -----------------------------------------------------
                 
                 RhinoDoc.ActiveDoc.Views.Redraw();
             }
@@ -255,16 +310,18 @@ namespace CADacombs.Commands.Modeling
                 var newBrep = conduit.Surface.ToBrep();
                 if (newBrep != null)
                 {
-                    // The Golden Rule: Rhino refuses to replace hidden objects.
-                    // We must unhide the original geometry right BEFORE we swap it.
+                    // --- FIXED: Suspend Undo during heavy document geometry swapping ---
+                    bool prevUndo = RhinoDoc.ActiveDoc.UndoRecordingEnabled;
+                    RhinoDoc.ActiveDoc.UndoRecordingEnabled = false;
+
                     RhinoDoc.ActiveDoc.Objects.Show(_objRef.ObjectId, true);
-                    
-                    // Now the replace will succeed, and Zebra is preserved
                     EndBulgeSurfaceLogic.ReplaceAndPreserveModes(RhinoDoc.ActiveDoc, _objRef.ObjectId, newBrep);
 
-                    // If the user doesn't want to see the surface, re-hide it instantly
                     if (checkBoxes["bShowGeom"].Checked != true)
                         RhinoDoc.ActiveDoc.Objects.Hide(_objRef.ObjectId, true);
+
+                    RhinoDoc.ActiveDoc.UndoRecordingEnabled = prevUndo;
+                    // -------------------------------------------------------------------
 
                     conduit.IsSwapped = true;
                     RhinoDoc.ActiveDoc.Views.Redraw();
