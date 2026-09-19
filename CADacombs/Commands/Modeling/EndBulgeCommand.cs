@@ -223,6 +223,10 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
+            #if DEBUG
+            RhinoApp.WriteLine($"[DEBUG ROUTING] objref_In.Trim() is null? {objref_In.Trim() == null}");
+            #endif
+
             if (objref_In.Trim() != null && !_edgeForCrvNotSrf)
             {
                 return EndBulgeSurfaceLogic.ExecuteWithRef(doc, isInteractive, objref_In);

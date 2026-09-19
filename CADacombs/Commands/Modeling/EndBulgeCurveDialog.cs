@@ -25,6 +25,23 @@ namespace CADacombs.Commands.Modeling
             {
                 BaseConduit = new EndBulgeConduit();
                 
+                int N = _ncIn.Points.Count;
+
+                // --- NEW: Strict Initial UI Clamping ---
+                // Force the radio buttons to respect N/2 before the UI renders.
+                // This prevents the dialog from hoarding points on startup.
+                bool prevAuto = _autoUpdating;
+                _autoUpdating = true; // Suspend preview updates during init
+
+                if (radioButtonLists["idxCont_Picked"].SelectedIndex > N / 2)
+                    radioButtonLists["idxCont_Picked"].SelectedIndex = N / 2;
+
+                if (radioButtonLists["idxCont_Opp"].SelectedIndex > N / 2)
+                    radioButtonLists["idxCont_Opp"].SelectedIndex = N / 2;
+
+                _autoUpdating = prevAuto;
+                // ---------------------------------------
+                
                 // Restrict G3 continuity if the curve topology doesn't mathematically support it
                 _ncIn.ClosestPoint(_objRef.SelectionPoint(), out double t_AtPicked);
                 bool pickedIsT1 = t_AtPicked > _ncIn.Domain.Mid;

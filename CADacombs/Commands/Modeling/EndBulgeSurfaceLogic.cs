@@ -16,6 +16,39 @@ namespace CADacombs.Commands.Modeling
     {
         public static Result ExecuteWithRef(RhinoDoc doc, bool isInteractive, ObjRef objRef)
         {
+            // --- NEW: Strict Symmetrical Point-Count Clamping ---
+            // Enforces the N/2 ceiling independently on both sides so neither side
+            // can deform the opposite edge on geometries with low point counts.
+            var edge = objRef.Trim()?.Edge ?? objRef.Edge();
+            if (edge != null)
+            {
+                var face = edge.Brep.Faces[edge.AdjacentFaces()[0]];
+                var nsIn = face.ToNurbsSurface();
+                if (nsIn != null)
+                {
+                    double tMid = edge.Domain.Mid;
+                    face.ClosestPoint(edge.PointAt(tMid), out double u, out double v);
+
+                    Interval domU = face.Domain(0);
+                    Interval domV = face.Domain(1);
+                    double dU0 = Math.Abs(u - domU.Min);
+                    double dU1 = Math.Abs(domU.Max - u);
+                    double dV0 = Math.Abs(v - domV.Min);
+                    double dV1 = Math.Abs(domV.Max - v);
+                    double minD = Math.Min(Math.Min(dU0, dU1), Math.Min(dV0, dV1));
+
+                    // Determine if the cross-section spans U or V
+                    int N = (minD == dU0 || minD == dU1) ? nsIn.Points.CountU : nsIn.Points.CountV;
+
+                    #if DEBUG
+                    RhinoApp.WriteLine($"[DEBUG LOGIC] Surface N calculated as: {N}");
+                    #endif
+
+                    EndBulgeOptions.ContinuityPicked = Math.Min(EndBulgeOptions.ContinuityPicked, N / 2);
+                    EndBulgeOptions.ContinuityOpp = Math.Min(EndBulgeOptions.ContinuityOpp, N / 2);
+                }
+            }
+
             EndBulgeOptions.Dialog = isInteractive;
 
             if (EndBulgeOptions.Dialog)

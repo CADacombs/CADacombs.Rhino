@@ -15,6 +15,18 @@ namespace CADacombs.Commands.Modeling
     {
         public static Result ExecuteWithRef(RhinoDoc doc, bool isInteractive, ObjRef objRef)
         {
+            // --- NEW: Strict Symmetrical Point-Count Clamping ---
+            // Enforces the N/2 ceiling independently on both sides so neither side
+            // can deform the opposite end on geometries with low point counts.
+            Curve baseCurve = objRef.Curve();
+            NurbsCurve ncIn = baseCurve as NurbsCurve ?? baseCurve?.ToNurbsCurve();
+            if (ncIn != null)
+            {
+                int N = ncIn.Points.Count;
+                EndBulgeOptions.ContinuityPicked = Math.Min(EndBulgeOptions.ContinuityPicked, N / 2);
+                EndBulgeOptions.ContinuityOpp = Math.Min(EndBulgeOptions.ContinuityOpp, N / 2);
+            }
+
             EndBulgeOptions.Dialog = isInteractive;
 
             if (EndBulgeOptions.Dialog)

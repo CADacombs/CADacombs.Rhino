@@ -57,6 +57,25 @@ namespace CADacombs.Commands.Modeling
             // Establish Continuity UI Limits based on the temporary curve
             if (tempCurve != null)
             {
+                int N = tempCurve.Points.Count;
+
+                #if DEBUG
+                RhinoApp.WriteLine($"[DEBUG DIALOG] tempCurve N calculated as: {N}");
+                #endif
+
+                // --- NEW: Strict Initial UI Clamping ---
+                bool prevAuto = _autoUpdating;
+                _autoUpdating = true; 
+
+                if (radioButtonLists["idxCont_Picked"].SelectedIndex > N / 2)
+                    radioButtonLists["idxCont_Picked"].SelectedIndex = N / 2;
+
+                if (radioButtonLists["idxCont_Opp"].SelectedIndex > N / 2)
+                    radioButtonLists["idxCont_Opp"].SelectedIndex = N / 2;
+
+                _autoUpdating = prevAuto;
+                // ---------------------------------------
+
                 bool pickedIsT1 = (_boundary == "U1" || _boundary == "V1");
                 bool canG3Picked = EndBulgeMath.CanMaintainG3(tempCurve, pickedIsT1);
                 bool canG3Opp = EndBulgeMath.CanMaintainG3(tempCurve, !pickedIsT1);
