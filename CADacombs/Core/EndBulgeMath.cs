@@ -153,10 +153,11 @@ namespace CADacombs.Core
                     {
                         Point3d p2 = nc_In.Points[2].Location;
                         Point3d p2p_base;
+                        double m2 = 1.0; // --- FIXED: Hoisted m2 into outer scope
 
                         if (max_mod_T0 >= 2 && orig_len_T0 > min_dist)
                         {
-                            double m2 = Math.Pow((p1p - p0).Length / orig_len_T0, 2.0);
+                            m2 = Math.Pow((p1p - p0).Length / orig_len_T0, 2.0);
                             p2p_base = (2.0 * p1p - p0) + m2 * (-2.0 * p1 + p2 + p0);
                         }
                         else
@@ -177,7 +178,13 @@ namespace CADacombs.Core
                             {
                                 double m3 = Math.Pow((p1p - p0).Length / orig_len_T0, 3.0);
                                 p3p_base = (3.0 * p2p_base - 3.0 * p1p + p0) + m3 * (p3 - 3.0 * p2 + 3.0 * p1 - p0);
-                                p3_comp = 3.0 * p2_slide;
+                                
+                                Vector3d positional_comp = 3.0 * p2_slide;
+                                
+                                double deg_factor = (double)(nc_In.Degree - 1) / (nc_In.Degree - 2);
+                                Vector3d chain_rule_comp = 3.0 * fSlideG2_T0 * m2 * deg_factor * (Vector3d)(p2 - 2.0 * p1 + p0);
+                                
+                                p3_comp = positional_comp + chain_rule_comp;
                             }
                             else
                             {
@@ -220,10 +227,11 @@ namespace CADacombs.Core
                     {
                         Point3d p2 = nc_In.Points[last - 2].Location;
                         Point3d p2p_base;
+                        double m2 = 1.0; // --- FIXED: Hoisted m2 into outer scope
 
                         if (max_mod_T1 >= 2 && orig_len_T1 > min_dist)
                         {
-                            double m2 = Math.Pow((p1p - p0).Length / orig_len_T1, 2.0);
+                            m2 = Math.Pow((p1p - p0).Length / orig_len_T1, 2.0);
                             p2p_base = (2.0 * p1p - p0) + m2 * (-2.0 * p1 + p2 + p0);
                         }
                         else
@@ -244,7 +252,13 @@ namespace CADacombs.Core
                             {
                                 double m3 = Math.Pow((p1p - p0).Length / orig_len_T1, 3.0);
                                 p3p_base = (3.0 * p2p_base - 3.0 * p1p + p0) + m3 * (p3 - 3.0 * p2 + 3.0 * p1 - p0);
-                                p3_comp = 3.0 * p2_slide;
+                                
+                                Vector3d positional_comp = 3.0 * p2_slide;
+                                
+                                double deg_factor = (double)(nc_In.Degree - 1) / (nc_In.Degree - 2);
+                                Vector3d chain_rule_comp = 3.0 * fSlideG2_T1 * m2 * deg_factor * (Vector3d)(p2 - 2.0 * p1 + p0);
+                                
+                                p3_comp = positional_comp + chain_rule_comp;
                             }
                             else
                             {
