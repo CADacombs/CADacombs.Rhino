@@ -58,8 +58,11 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 * **Dual-End Modification:**
   * Modify the picked end/edge and the opposite end/edge **independently (default)** or **simultaneously (Linked)**.
 * **Continuity Control:**
-  * Continuities to maintain for both ends are explicitly defined (defaults to **G3**) and selectable by the user. 
+  * Continuities to maintain for both ends are explicitly defined (up to **G3**) and selectable by the user. 
   * Strict mathematical locking ensures control points are only shifted when permitted by the active continuity tier.
+  * **Dynamic Degree Upgrades:** Includes one-click buttons to instantly upgrade curve/surface degree to unlock higher mathematical continuity tiers interactively.
+* **Universal NURBS Math:**
+  * Utilizes exact 4D geometric reparameterization and quotient rules to maintain perfect G2 and G3 continuity on any knot structure or rational geometry, bypassing legacy Bezier limitations.
 * **Geometry Modification:**
   * **Curves:** Directly translates the control points at the extreme ends of the open curve.
   * **Surfaces:** The entire natural edge side of the surface is always modified symmetrically (isocurve at domain extreme).

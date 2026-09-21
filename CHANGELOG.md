@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
+## [0.2.7] - 2026-09-20
+
+### Added
+- `ccEndBulge`: Added "Upgrade Degree" buttons dynamically to the dialog UI. Curves and surfaces can now have their degree increased interactively to mathematically unlock higher continuity constraints (G2/G3).
+- `ccEndBulge`: Added automatic continuity tier upgrading; when a user upgrades a geometry's degree, the dialog automatically snaps the continuity constraints to the newly available safe maximum.
+- `ccEndBulge`: Added a `#if DEBUG` compilation flag wrapper around internal terminal outputs, keeping the release build fast and silent.
+
+### Changed
+- `ccEndBulge`: Replaced the legacy pure Bezier approximation math with an exact 4D quotient rule and geometric reparameterization solver. The command can now safely maintain perfect G3 continuity across complex internal multi-knot and single-span NURBS structures.
+- `ccEndBulge`: G3 continuity manipulation is now universally unlocked for any curve or surface edge of Degree 3 or higher, regardless of internal knot multiplicity.
+
+### Fixed
+- `ccEndBulge`: Fixed an issue where the live preview logic (hiding/locking) was leaking into Rhino's global Undo stack. The command now uses strict `UndoRecordingEnabled = false` wrappers to guarantee that only the final user-approved bake creates an Undo record.
+- `ccEndBulge`: Fixed a mathematical omission in the chain rule derivation where applying a G2 slide to a G3-constrained curve would skew the torsion vector and break G3 continuity on non-uniform parameterizations.
+
 ## [0.2.6] - 2026-09-12
 
 ### Added

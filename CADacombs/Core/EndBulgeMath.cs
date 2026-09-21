@@ -6,28 +6,33 @@ namespace CADacombs.Core
 {
     /// <summary>
     /// The core shared mathematical solvers and point-allocation engine.
+    /// Utilizes exact 4D geometric reparameterization and quotient rules.
     /// </summary>
     public static class EndBulgeMath
     {
         /// <summary>
         /// Evaluates if a NURBS curve can mathematically maintain G3 continuity.
         /// </summary>
+        /// <summary>
+        /// Evaluates if a NURBS curve can mathematically maintain G3 continuity.
+        /// With the 4D quotient rule implementation, this is universally true for Degree >= 3.
+        /// </summary>
         public static bool CanMaintainG3(NurbsCurve nc, bool evalT1End)
         {
             if (nc == null) return false;
+            
+            // G3 requires a minimum mathematical flexibility of Degree 3
+            if (nc.Degree < 3) return false;
+            
+            // G3 physically requires 4 control points (P0, P1, P2, P3) to manipulate
             if (nc.Points.Count < 4) return false;
-            if (nc.SpanCount == 1) return true;
 
-            var knots = nc.Knots;
-            int degree = nc.Degree;
-            int iKnot = evalT1End ? (knots.Count - degree - 1) : degree;
-            return knots.KnotMultiplicity(iKnot) >= 3;
+            return true;
         }
 
         /// <summary>
         /// The master curve generation and point allocation algorithm.
         /// Returns a Tuple containing the resulting Curve, an Error string (if any), and mathematical Info.
-        /// (Note: For continuity inputs, -1 equals 'None', 0=G0, 1=G1, 2=G2, 3=G3)
         /// </summary>
         public static (NurbsCurve Result, string Error, (int MaxModT0, int MaxModT1, bool Overlap)? Info) 
             CreateCurve(
@@ -89,9 +94,6 @@ namespace CADacombs.Core
             int max_mod_T0 = alloc_0 - 1;
             int max_mod_T1 = alloc_1 - 1;
 
-            // STRICT NATIVE CONTINUITY LOCKING:
-            // We no longer distribute "free" interior points to smooth the curve. 
-            // Translation is strictly clamped to the points governed by the active continuity tier.
             int scale_limit_T0 = max_mod_T0 + 1;
             int scale_limit_T1 = max_mod_T1 + 1;
 
@@ -116,164 +118,68 @@ namespace CADacombs.Core
             if (base_T0 && base_T1)
                 return (null, "Input parameters do not lead to modification of the geometry.", (max_mod_T0, max_mod_T1, bOverlap));
 
-            // Extract points safely using native C# arrays
             Point3d[] pts_Prime = new Point3d[N];
             for (int i = 0; i < N; i++)
             {
                 pts_Prime[i] = nc_In.Points[i].Location;
             }
 
-            // Document units scale logic
             double unit_scale = RhinoMath.UnitScale(UnitSystem.Centimeters, RhinoDoc.ActiveDoc.ModelUnitSystem);
             double min_dist = 1e-6 * unit_scale;
 
+            var knots = nc_In.Knots;
+            int deg = nc_In.Degree;
+
             // ----------------------------------------------------
-            // SCALE T0 END
+            // SCALE T0 END (4D Quotient Rule)
             // ----------------------------------------------------
             if (!base_T0)
             {
-                Point3d p0 = nc_In.Points[0].Location;
-                Transform xform_T0 = Transform.Scale(p0, fScale_T0);
-
-                for (int i = 1; i < scale_limit_T0; i++)
+                int limit = scale_limit_T0;
+                int[] idx = new int[4];
+                double[] w = new double[4];
+                
+                for (int i = 0; i < 4; i++) 
                 {
-                    Point3d pt_p = nc_In.Points[i].Location;
-                    pt_p.Transform(xform_T0);
-                    pts_Prime[i] = pt_p;
+                    idx[i] = i < N ? i : N - 1;
+                    w[i] = nc_In.Points.GetWeight(idx[i]);
                 }
+                
+                double t0 = knots[deg - 1];
+                double[] deltas = new double[3];
+                deltas[0] = (knots.Count > deg) ? knots[deg] - t0 : 1.0;
+                deltas[1] = (knots.Count > deg + 1) ? knots[deg + 1] - t0 : deltas[0];
+                deltas[2] = (knots.Count > deg + 2) ? knots[deg + 2] - t0 : deltas[1];
 
-                if (scale_limit_T0 > 1)
-                {
-                    Point3d p1 = nc_In.Points[1].Location;
-                    Point3d p1p = pts_Prime[1];
-                    Vector3d slide_vec = p1p - p0;
-                    double orig_len_T0 = (p1 - p0).Length;
-
-                    if (scale_limit_T0 > 2)
-                    {
-                        Point3d p2 = nc_In.Points[2].Location;
-                        Point3d p2p_base;
-                        double m2 = 1.0; // --- FIXED: Hoisted m2 into outer scope
-
-                        if (max_mod_T0 >= 2 && orig_len_T0 > min_dist)
-                        {
-                            m2 = Math.Pow((p1p - p0).Length / orig_len_T0, 2.0);
-                            p2p_base = (2.0 * p1p - p0) + m2 * (-2.0 * p1 + p2 + p0);
-                        }
-                        else
-                        {
-                            p2p_base = pts_Prime[2];
-                        }
-
-                        Vector3d p2_slide = slide_vec * fSlideG2_T0;
-                        pts_Prime[2] = p2p_base + p2_slide;
-
-                        if (scale_limit_T0 > 3)
-                        {
-                            Point3d p3 = nc_In.Points[3].Location;
-                            Point3d p3p_base;
-                            Vector3d p3_comp;
-
-                            if (max_mod_T0 >= 3 && orig_len_T0 > min_dist)
-                            {
-                                double m3 = Math.Pow((p1p - p0).Length / orig_len_T0, 3.0);
-                                p3p_base = (3.0 * p2p_base - 3.0 * p1p + p0) + m3 * (p3 - 3.0 * p2 + 3.0 * p1 - p0);
-                                
-                                Vector3d positional_comp = 3.0 * p2_slide;
-                                
-                                double deg_factor = (double)(nc_In.Degree - 1) / (nc_In.Degree - 2);
-                                Vector3d chain_rule_comp = 3.0 * fSlideG2_T0 * m2 * deg_factor * (Vector3d)(p2 - 2.0 * p1 + p0);
-                                
-                                p3_comp = positional_comp + chain_rule_comp;
-                            }
-                            else
-                            {
-                                p3p_base = pts_Prime[3];
-                                p3_comp = Vector3d.Zero;
-                            }
-
-                            Vector3d p3_slide = slide_vec * fSlideG3_T0;
-                            pts_Prime[3] = p3p_base + p3_comp + p3_slide;
-                        }
-                    }
-                }
+                ApplyQuotientRuleEndBulge(ref pts_Prime, idx, w, deltas, deg, limit, fScale_T0, fSlideG2_T0, fSlideG3_T0);
             }
 
             // ----------------------------------------------------
-            // SCALE T1 END
+            // SCALE T1 END (4D Quotient Rule Backwards)
             // ----------------------------------------------------
             if (!base_T1)
             {
+                int limit = scale_limit_T1;
                 int last = N - 1;
-                Point3d p0 = nc_In.Points[last].Location;
-                Transform xform_T1 = Transform.Scale(p0, fScale_T1);
-
-                for (int i = 1; i < scale_limit_T1; i++)
+                int[] idx = new int[4];
+                double[] w = new double[4];
+                
+                for (int i = 0; i < 4; i++) 
                 {
-                    int idx = last - i;
-                    Point3d pt_p = nc_In.Points[idx].Location;
-                    pt_p.Transform(xform_T1);
-                    pts_Prime[idx] = pt_p;
+                    idx[i] = last - i >= 0 ? last - i : 0;
+                    w[i] = nc_In.Points.GetWeight(idx[i]);
                 }
+                
+                double t1 = knots[N - 1]; // Max domain parameter
+                double[] deltas = new double[3];
+                deltas[0] = (N - 2 >= 0) ? t1 - knots[N - 2] : 1.0;
+                deltas[1] = (N - 3 >= 0) ? t1 - knots[N - 3] : deltas[0];
+                deltas[2] = (N - 4 >= 0) ? t1 - knots[N - 4] : deltas[1];
 
-                if (scale_limit_T1 > 1)
-                {
-                    Point3d p1 = nc_In.Points[last - 1].Location;
-                    Point3d p1p = pts_Prime[last - 1];
-                    Vector3d slide_vec = p1p - p0;
-                    double orig_len_T1 = (p1 - p0).Length;
-
-                    if (scale_limit_T1 > 2)
-                    {
-                        Point3d p2 = nc_In.Points[last - 2].Location;
-                        Point3d p2p_base;
-                        double m2 = 1.0; // --- FIXED: Hoisted m2 into outer scope
-
-                        if (max_mod_T1 >= 2 && orig_len_T1 > min_dist)
-                        {
-                            m2 = Math.Pow((p1p - p0).Length / orig_len_T1, 2.0);
-                            p2p_base = (2.0 * p1p - p0) + m2 * (-2.0 * p1 + p2 + p0);
-                        }
-                        else
-                        {
-                            p2p_base = pts_Prime[last - 2];
-                        }
-
-                        Vector3d p2_slide = slide_vec * fSlideG2_T1;
-                        pts_Prime[last - 2] = p2p_base + p2_slide;
-
-                        if (scale_limit_T1 > 3)
-                        {
-                            Point3d p3 = nc_In.Points[last - 3].Location;
-                            Point3d p3p_base;
-                            Vector3d p3_comp;
-
-                            if (max_mod_T1 >= 3 && orig_len_T1 > min_dist)
-                            {
-                                double m3 = Math.Pow((p1p - p0).Length / orig_len_T1, 3.0);
-                                p3p_base = (3.0 * p2p_base - 3.0 * p1p + p0) + m3 * (p3 - 3.0 * p2 + 3.0 * p1 - p0);
-                                
-                                Vector3d positional_comp = 3.0 * p2_slide;
-                                
-                                double deg_factor = (double)(nc_In.Degree - 1) / (nc_In.Degree - 2);
-                                Vector3d chain_rule_comp = 3.0 * fSlideG2_T1 * m2 * deg_factor * (Vector3d)(p2 - 2.0 * p1 + p0);
-                                
-                                p3_comp = positional_comp + chain_rule_comp;
-                            }
-                            else
-                            {
-                                p3p_base = pts_Prime[last - 3];
-                                p3_comp = Vector3d.Zero;
-                            }
-
-                            Vector3d p3_slide = slide_vec * fSlideG3_T1;
-                            pts_Prime[last - 3] = p3p_base + p3_comp + p3_slide;
-                        }
-                    }
-                }
+                ApplyQuotientRuleEndBulge(ref pts_Prime, idx, w, deltas, deg, limit, fScale_T1, fSlideG2_T1, fSlideG3_T1);
             }
 
-            // Enforce minimum distance (but ignore inherently stacked singularity points)
+            // Enforce minimum distance (ignoring inherently stacked singularity points)
             for (int i = 0; i < N - 1; i++)
             {
                 if (pts_Prime[i].DistanceTo(pts_Prime[i + 1]) < min_dist)
@@ -296,6 +202,107 @@ namespace CADacombs.Core
             }
 
             return (nc_Out, null, (max_mod_T0, max_mod_T1, bOverlap));
+        }
+
+        /// <summary>
+        /// Internal solver applying exact geometric reparameterization algebraically to 4D homogeneous vectors.
+        /// </summary>
+        private static void ApplyQuotientRuleEndBulge(
+            ref Point3d[] pts_Prime, int[] indices, double[] w, double[] delta, 
+            int degree, int limit, double scale, double slide2, double slide3)
+        {
+            if (limit <= 1) return;
+
+            double p_f = degree;
+            double d1 = delta[0] < 1e-12 ? 1.0 : delta[0];
+            double d2 = delta[1] < 1e-12 ? d1 : delta[1];
+            double d3 = delta[2] < 1e-12 ? d2 : delta[2];
+
+            // Extract Generic B-Spline Derivative Coefficients
+            double a1 = p_f / d1;
+            double a0 = -a1;
+
+            double b2 = (p_f * (p_f - 1.0)) / (d1 * d2);
+            double b0 = (p_f * (p_f - 1.0)) / (d1 * d1);
+            double b1 = -b2 - b0;
+
+            double c3 = 0, c2 = 0, c1 = 0, c0 = 0;
+            if (degree >= 3)
+            {
+                c3 = (p_f * (p_f - 1.0) * (p_f - 2.0)) / (d1 * d2 * d3);
+                c0 = -(p_f * (p_f - 1.0) * (p_f - 2.0)) / (d1 * d1 * d1);
+                double c_term1 = (p_f * (p_f - 1.0) * (p_f - 2.0)) / (d1 * d2 * d2);
+                double c_term2 = (p_f * (p_f - 1.0) * (p_f - 2.0)) / (d1 * d1 * d2);
+                c2 = -c3 - c_term1 - c_term2;
+                c1 = -c3 - c2 - c0;
+            }
+
+            Vector3d p0 = (Vector3d)pts_Prime[indices[0]];
+            double w0 = w[0];
+
+            Vector3d p1 = (Vector3d)pts_Prime[indices[1]];
+            double w1 = w[1];
+
+            // Original 1st Derivative (Quotient Rule)
+            Vector3d A1 = p1 * (a1 * w1) + p0 * (a0 * w0);
+            double W1 = w1 * a1 + w0 * a0;
+            Vector3d C1 = (A1 - p0 * W1) / w0;
+
+            // Target 1st Derivative (Pure Scale)
+            double m = scale;
+            Vector3d C1_tgt = C1 * m;
+
+            // Back-solve to 3D point
+            Vector3d A1_tgt = C1_tgt * w0 + p0 * W1;
+            Vector3d p1_tgt = (A1_tgt - p0 * (a0 * w0)) / (a1 * w1);
+            
+            pts_Prime[indices[1]] = (Point3d)p1_tgt;
+
+            if (limit > 2 && degree >= 2)
+            {
+                Vector3d p2 = (Vector3d)pts_Prime[indices[2]];
+                double w2 = w[2];
+
+                // Original 2nd Derivative (Quotient Rule)
+                Vector3d A2 = p2 * (b2 * w2) + p1 * (b1 * w1) + p0 * (b0 * w0);
+                double W2 = w2 * b2 + w1 * b1 + w0 * b0;
+                Vector3d C2 = (A2 - C1 * 2.0 * W1 - p0 * W2) / w0;
+
+                // Parametric Slide Parameter (Translates 3D slide to parametric acceleration)
+                double k2 = m * slide2 * ((b2 * w2) / (a1 * w1));
+
+                // Target 2nd Derivative (Geometrically locked to tangent path)
+                Vector3d C2_tgt = C2 * (m * m) + C1 * k2;
+
+                // Back-solve to 3D point
+                Vector3d A2_tgt = C2_tgt * w0 + C1_tgt * 2.0 * W1 + p0 * W2;
+                Vector3d p2_tgt = (A2_tgt - p1_tgt * (b1 * w1) - p0 * (b0 * w0)) / (b2 * w2);
+
+                pts_Prime[indices[2]] = (Point3d)p2_tgt;
+
+                if (limit > 3 && degree >= 3)
+                {
+                    Vector3d p3 = (Vector3d)pts_Prime[indices[3]];
+                    double w3 = w[3];
+
+                    // Original 3rd Derivative (Quotient Rule)
+                    Vector3d A3 = p3 * (c3 * w3) + p2 * (c2 * w2) + p1 * (c1 * w1) + p0 * (c0 * w0);
+                    double W3 = w3 * c3 + w2 * c2 + w1 * c1 + w0 * c0;
+                    Vector3d C3 = (A3 - C2 * 3.0 * W1 - C1 * 3.0 * W2 - p0 * W3) / w0;
+
+                    // Parametric Slide Parameter
+                    double k3 = m * slide3 * ((c3 * w3) / (a1 * w1));
+
+                    // Target 3rd Derivative (Geometrically locked reparameterization cross-term)
+                    Vector3d C3_tgt = C3 * (m * m * m) + C2 * (3.0 * m * k2) + C1 * k3;
+
+                    // Back-solve to 3D point
+                    Vector3d A3_tgt = C3_tgt * w0 + C2_tgt * 3.0 * W1 + C1_tgt * 3.0 * W2 + p0 * W3;
+                    Vector3d p3_tgt = (A3_tgt - p2_tgt * (c2 * w2) - p1_tgt * (c1 * w1) - p0 * (c0 * w0)) / (c3 * w3);
+
+                    pts_Prime[indices[3]] = (Point3d)p3_tgt;
+                }
+            }
         }
     }
 }
