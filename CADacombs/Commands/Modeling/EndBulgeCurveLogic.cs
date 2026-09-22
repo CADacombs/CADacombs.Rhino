@@ -15,9 +15,6 @@ namespace CADacombs.Commands.Modeling
     {
         public static Result ExecuteWithRef(RhinoDoc doc, bool isInteractive, ObjRef objRef)
         {
-            // --- NEW: Strict Symmetrical Point-Count Clamping ---
-            // Enforces the N/2 ceiling independently on both sides so neither side
-            // can deform the opposite end on geometries with low point counts.
             Curve baseCurve = objRef.Curve();
             NurbsCurve ncIn = baseCurve as NurbsCurve ?? baseCurve?.ToNurbsCurve();
             if (ncIn != null)
@@ -49,11 +46,13 @@ namespace CADacombs.Commands.Modeling
             var parent = RhinoEtoApp.MainWindowForDocument(doc);
             var dialog = new EndBulgeCurveDialog(objRef);
 
-            // --- FIXED: Suspend undo tracking for temporary UI locking ---
             bool prevUndo = doc.UndoRecordingEnabled;
+            bool wasModified = doc.Modified;
+            
             doc.UndoRecordingEnabled = false;
             doc.Objects.Lock(objRef.ObjectId, true);
             doc.UndoRecordingEnabled = prevUndo;
+            doc.Modified = wasModified; // Restore the clean state
 
             dialog.UpdatePreview();
             dialog.BaseConduit.Enabled = true;
@@ -64,14 +63,18 @@ namespace CADacombs.Commands.Modeling
                 dialog.ShowSemiModal(doc, parent);
 
                 doc.UndoRecordingEnabled = false;
+                wasModified = doc.Modified;
+                
                 if (!EndBulgeOptions.Debug) doc.Views.RedrawEnabled = false;
                 doc.Objects.UnselectAll();
                 doc.Objects.Unlock(objRef.ObjectId, true);
+                
                 doc.UndoRecordingEnabled = prevUndo;
+                doc.Modified = wasModified; // Restore state before potential edit
 
                 if (dialog.DialogOk && dialog.BaseConduit.Crv != null)
                 {
-                    // Only create the undo record for the actual geometry modification
+                    // Rhino will naturally flag the document as Modified during this explicit UndoRecord
                     uint undoSn = doc.BeginUndoRecord("EndBulge Crv");
                     ProcessCurveObject(doc, objRef, dialog.BaseConduit.Crv);
                     doc.EndUndoRecord(undoSn);
@@ -82,16 +85,15 @@ namespace CADacombs.Commands.Modeling
 #if DEBUG
                 RhinoApp.WriteLine($"Script Error Encountered: {ex.Message}");
 #endif
+                doc.UndoRecordingEnabled = false;
+                wasModified = doc.Modified;
+                doc.Objects.Unlock(objRef.ObjectId, true);
+                doc.UndoRecordingEnabled = prevUndo;
+                doc.Modified = wasModified;
             }
             finally
             {
                 dialog.BaseConduit.Enabled = false;
-                
-                // Safety unlock in case an exception fired early
-                doc.UndoRecordingEnabled = false;
-                doc.Objects.Unlock(objRef.ObjectId, true);
-                doc.UndoRecordingEnabled = prevUndo;
-                
                 doc.Views.RedrawEnabled = true;
                 doc.Views.Redraw();
             }
@@ -114,7 +116,7 @@ namespace CADacombs.Commands.Modeling
 
                 if (EndBulgeOptions.LinkedEnds)
                 {
-                    EndBulgeOptions.ContinuityOpp = EndBulgeOptions.ContinuityPicked; // NEW: Sync continuity
+                    EndBulgeOptions.ContinuityOpp = EndBulgeOptions.ContinuityPicked; 
                     EndBulgeOptions.ScaleOpp = EndBulgeOptions.ScalePicked;
                     EndBulgeOptions.SlideG2Opp = EndBulgeOptions.SlideG2Picked;
                     EndBulgeOptions.SlideG3Opp = EndBulgeOptions.SlideG3Picked;

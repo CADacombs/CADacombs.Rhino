@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
+## [0.2.8] - 2026-09-21
+
+### Added
+- `ccEndBulge`: The interactive dialog is now horizontally resizable, allowing users to stretch the sliders for finer visual control without compromising the default compact footprint.
+
+### Changed
+- `ccEndBulge`: Reorganized the "Display" UI layout to establish a clearer visual hierarchy. Universal analysis tools (Control polygon, Curvature graph) are grouped at the top, followed by the native document display row, and finally the conduit shading row.
+- `ccEndBulge`: Renamed "Use native document preview" to "Use document object display" for clarity, and replaced the "Wireframe" radio option with "No shading".
+- `ccEndBulge`: Upgrading the degree of a curve or surface now smoothly increments to the next highest available continuity tier, rather than dropping the selection state entirely.
+
+### Fixed
+- `ccEndBulge`: Resolved a critical `0xc0000409` stack buffer overrun crash caused by a memory leak when instantiating unmanaged C++ materials in the high-frequency display pipeline.
+- `ccEndBulge`: Fixed corrupted Undo histories and "Could not replace surface" errors. The command now uses a completely quarantined temporary proxy object for live document previews, leaving the original geometry perfectly preserved for a clean Undo step.
+- `ccEndBulge`: Fixed a bug where locking geometry or opening the dialog would silently flip the document's `Modified` flag to `true`, triggering false-positive "Save changes?" prompts upon cancelling.
+- `ccEndBulge`: Fixed a visual glitch where curve/surface wireframes would temporarily disappear when toggling continuity constraints by ensuring a delayed redraw perfectly catches lazy-evaluated geometry.
+
 ## [0.2.7] - 2026-09-20
 
 ### Added

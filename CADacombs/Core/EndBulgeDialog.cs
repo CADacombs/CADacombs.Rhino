@@ -6,15 +6,8 @@ using Rhino;
 
 namespace CADacombs.Core
 {
-    /// <summary>
-    /// The base Eto Dialog for the EndBulge tool suite. 
-    /// Handles the complex UI layout, homemade steppers, and state synchronization.
-    /// </summary>
     public class EndBulgeDialog : CADacombsDialogBase
     {
-        // ----------------------------------------------------
-        // Control Dictionaries
-        // ----------------------------------------------------
         protected Button btnUpgrade;
         protected Dictionary<string, Label> labels = new Dictionary<string, Label>();
         protected Dictionary<string, CheckBox> checkBoxes = new Dictionary<string, CheckBox>();
@@ -25,10 +18,9 @@ namespace CADacombs.Core
         protected Dictionary<string, Slider> sliders = new Dictionary<string, Slider>();
         protected Dictionary<string, Button> btnUp = new Dictionary<string, Button>();
         protected Dictionary<string, Button> btnDown = new Dictionary<string, Button>();
+        
+        protected Dictionary<string, RadioButton> radioButtons = new Dictionary<string, RadioButton>();
 
-        // ----------------------------------------------------
-        // State Variables
-        // ----------------------------------------------------
         public bool DialogOk { get; protected set; } = false;
         protected bool isSurface;
         
@@ -45,6 +37,8 @@ namespace CADacombs.Core
         protected Dictionary<string, int> sliderPrevVals = new Dictionary<string, int>();
 
         protected int _lastClickedCont = 0;
+        
+        protected bool hasZebra = false, hasEmap = false, hasDraft = false, hasCurv = false;
 
         public EndBulgeConduit BaseConduit { get; set; }
 
@@ -68,28 +62,18 @@ namespace CADacombs.Core
             holdTimer.Elapsed += OnHoldTimerElapsed;
         }
 
-        // ----------------------------------------------------
-        // Virtual Methods (To be overridden by Crv/Srf)
-        // ----------------------------------------------------
         public virtual void UpdatePreview() { }
         protected virtual void UpdateControlStates() { }
 
-        // ----------------------------------------------------
-        // UI Creation
-        // ----------------------------------------------------
         protected virtual void CreateControls()
         {
             string termLow = isSurface ? "edge" : "end";
-
-            // For arrows
             Font smallFont = new Font(SystemFont.Default, 4);
-
             string[] contList = { "None", "G0", "G1", "G2", "G3" };
 
             btnUpgrade = new Button { Visible = false };
             btnUpgrade.Click += OnUpgradeClicked;
             
-            // Radio button Spacing kept at 8 to maintain visual grouping without blowing out the width
             radioButtonLists["idxCont_Picked"] = new RadioButtonList { Spacing = new Size(8, 4) };
             radioButtonLists["idxCont_Picked"].DataStore = contList;
             radioButtonLists["idxCont_Picked"].SelectedIndex = EndBulgeOptions.ContinuityPicked;
@@ -123,24 +107,16 @@ namespace CADacombs.Core
                 labels[sKey] = new Label { Text = labelText };
                 textBoxes[sKey] = new TextBox { Text = initVal.ToString("F4") };
                 
-                // --- NEW: UX Tooltips ---
                 string tip = isScale ? "Scales the distance between the boundary and the adjacent interior control point." : 
                                        "Translates the corresponding deeper control point parallel to the tangent vector.";
                 labels[sKey].ToolTip = tip;
                 textBoxes[sKey].ToolTip = tip;
 
-                // --- NEW: Mouse Wheel Support ---
                 textBoxes[sKey].MouseWheel += (s, e) => 
                 {
                     if (!textBoxes[sKey].Enabled) return;
-                    
-                    // e.Delta.Height contains the scroll direction
                     int direction = e.Delta.Height > 0 ? 1 : (e.Delta.Height < 0 ? -1 : 0);
-                    if (direction != 0)
-                    {
-                        AdjustStepper(direction, sKey);
-                        e.Handled = true; // Prevents the scroll event from bubbling up to the window
-                    }
+                    if (direction != 0) { AdjustStepper(direction, sKey); e.Handled = true; }
                 };
                 
                 if (isScale) textBoxes[sKey].TextChanged += OnScaleTextChanged;
@@ -150,11 +126,7 @@ namespace CADacombs.Core
                 sliders[sKey] = new Slider { SnapToTick = true, TickFrequency = 1 };
                 sliders[sKey].ValueChanged += (s, e) => OnJogSliderChanged(sKey);
                 sliders[sKey].MouseUp += (s, e) => ZeroSlider(sKey);
-                
-                // Catch keyboard releases (arrow keys)
                 sliders[sKey].KeyUp += (s, e) => ZeroSlider(sKey);
-                
-                // Catch when the control drops mouse capture or the user clicks away
                 sliders[sKey].LostFocus += (s, e) => ZeroSlider(sKey);
 
                 btnUp[sKey] = new Button { Text = "▲", Width = 16, Height = 12, Font = smallFont, MinimumSize = new Size(16, 12) };
@@ -187,6 +159,42 @@ namespace CADacombs.Core
 
             checkBoxes["bShowGraph"] = new CheckBox { Text = "CGraph", Checked = EndBulgeOptions.ShowGraph };
             checkBoxes["bShowGraph"].CheckedChanged += OnDisplayCheckedChanged;
+            
+            if (isSurface)
+            {
+                checkBoxes["bUseNativePreview"] = new CheckBox { Text = "Use document object display", Checked = EndBulgeOptions.UseNativePreview };
+                checkBoxes["bUseNativePreview"].CheckedChanged += OnDisplayCheckedChanged;
+
+                checkBoxes["bShowWireframe"] = new CheckBox { Text = "Wireframe", Checked = true };
+                checkBoxes["bShowWireframe"].CheckedChanged += OnDisplayCheckedChanged;
+
+                var methods = typeof(Rhino.Display.DisplayPipeline).GetMethods();
+                foreach (var m in methods)
+                {
+                    if (m.Name == "DrawZebraPreview") hasZebra = true;
+                    if (m.Name == "DrawEmapPreview") hasEmap = true;
+                    if (m.Name == "DrawDraftAnglePreview") hasDraft = true;
+                    if (m.Name == "DrawCurvaturePreview") hasCurv = true;
+                }
+                
+                var rbNoShad = new RadioButton { Text = "No shading" };
+                radioButtons["rbNoShading"] = rbNoShad;
+                radioButtons["rbShaded"] = new RadioButton(rbNoShad) { Text = "Shaded" };
+                if (hasZebra) radioButtons["rbZebra"] = new RadioButton(rbNoShad) { Text = "Zebra" };
+                if (hasEmap) radioButtons["rbEmap"] = new RadioButton(rbNoShad) { Text = "EMap" };
+                if (hasDraft) radioButtons["rbDraft"] = new RadioButton(rbNoShad) { Text = "Draft angle" };
+                if (hasCurv) radioButtons["rbCurv"] = new RadioButton(rbNoShad) { Text = "Curvature" };
+
+                radioButtons["rbShaded"].Checked = true;
+
+                EventHandler<EventArgs> displayCheck = (s, e) => {
+                    if (((RadioButton)s).Checked) OnDisplayCheckedChanged(s, e);
+                };
+                foreach (var rb in radioButtons.Values)
+                {
+                    rb.CheckedChanged += displayCheck;
+                }
+            }
 
             labels["iGraphScale"] = new Label { Text = "Scale:" };
             numericSteppers["iGraphScale"] = new NumericStepper { DecimalPlaces = 0, MinValue = 1, MaxValue = 10000, Value = EndBulgeOptions.GraphScale };
@@ -202,7 +210,6 @@ namespace CADacombs.Core
             foreach (var k in new[] { "fIncrement", "fScale_Picked", "fSlideG2_Picked", "fSlideG3_Picked", "fScale_Opp", "fSlideG2_Opp", "fSlideG3_Opp" })
                 labels[k].Width = 50;
 
-            // SHRUNK fixed widths so they don't overpower the top row
             textBoxes["fIncrement"].Width = 50;
             labels["iSliderSteps"].Width = 64;
             dropDowns["iSliderSteps"].Width = 60;
@@ -217,9 +224,7 @@ namespace CADacombs.Core
         protected virtual void SetupLayout()
         {
             string termCap = isSurface ? "Edge" : "End";
-
             Label Gap() => new Label { Width = 8 };
-
             StackLayout Wrap(Control c) => new StackLayout { Orientation = Orientation.Horizontal, Items = { c } };
 
             StackLayout BuildCombo(string key)
@@ -230,39 +235,25 @@ namespace CADacombs.Core
 
             var root = new StackLayout { Padding = new Padding(10), Spacing = 8, HorizontalContentAlignment = HorizontalAlignment.Stretch };
 
-            // 1. MASTER MODE SWITCH (Moved to the very top!)
             var modeGrid = new TableLayout { Spacing = new Size(8, 4) };
             modeGrid.Rows.Add(new TableRow(labels["bLinkedEnds"], radioButtonLists["bLinkedEnds"], new TableCell { ScaleWidth = true }));
             root.Items.Add(modeGrid);
             root.Items.Add(new Label { Height = 2 });
 
-            // 2. MATHEMATICAL CONSTRAINTS
             var lblCont = new Label { Text = "Continuity Constraints", Font = new Font(SystemFont.Bold, 10) };
-            var contHeader = new StackLayout { 
-                Orientation = Orientation.Horizontal, 
-                Spacing = 10, 
-                VerticalContentAlignment = VerticalAlignment.Center, 
-                Items = { lblCont, btnUpgrade } 
-            };
+            var contHeader = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, VerticalContentAlignment = VerticalAlignment.Center, Items = { lblCont, btnUpgrade } };
             root.Items.Add(contHeader);
             var contGrid = new TableLayout { Spacing = new Size(4, 4) };
             contGrid.Rows.Add(new TableRow(labels["idxCont_Picked"], radioButtonLists["idxCont_Picked"], new TableCell { ScaleWidth = true }));
             contGrid.Rows.Add(new TableRow(labels["idxCont_Opp"], radioButtonLists["idxCont_Opp"], new TableCell { ScaleWidth = true }));
             root.Items.Add(contGrid);
             
-            // Visual Divider
             root.Items.Add(new Label { Height = 0 });
             root.Items.Add(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             root.Items.Add(new Label { Height = 0 });
 
-            // 3. SLIDER SETTINGS & RESET
             var incrGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            incrGrid.AddRow(
-                labels["fIncrement"], Wrap(textBoxes["fIncrement"]), 
-                Gap(), 
-                labels["iSliderSteps"], Wrap(dropDowns["iSliderSteps"]), 
-                null 
-            );
+            incrGrid.AddRow(labels["fIncrement"], Wrap(textBoxes["fIncrement"]), Gap(), labels["iSliderSteps"], Wrap(dropDowns["iSliderSteps"]), null);
             root.Items.Add(incrGrid);
 
             Button btnReset = new Button { Text = "Reset All Scale and Slide Values" };
@@ -270,7 +261,6 @@ namespace CADacombs.Core
             root.Items.Add(btnReset);
             root.Items.Add(new Label { Height = 4 });
 
-            // 4. THE SLIDERS
             root.Items.Add(new Label { Text = $"Picked {termCap}", Font = new Font(SystemFont.Bold, 10) });
             var pickedGrid = new TableLayout { Spacing = new Size(4, 4) };
             pickedGrid.Rows.Add(new TableRow(labels["fScale_Picked"], BuildCombo("fScale_Picked"), Gap(), new TableCell(sliders["fScale_Picked"], true)));
@@ -286,31 +276,67 @@ namespace CADacombs.Core
             oppGrid.Rows.Add(new TableRow(labels["fSlideG3_Opp"], BuildCombo("fSlideG3_Opp"), Gap(), new TableCell(sliders["fSlideG3_Opp"], true)));
             root.Items.Add(oppGrid);
             
-            // Visual Divider
             root.Items.Add(new Label { Height = 0 });
             root.Items.Add(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             root.Items.Add(new Label { Height = 0 });
 
-            // 5. DISPLAY
-            root.Items.Add(new Label { Text = "Display", Font = new Font(SystemFont.Bold, 10) });
+            var displayHeaderRow = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 20, VerticalContentAlignment = VerticalAlignment.Center };
+            displayHeaderRow.Items.Add(new Label { Text = "Display", Font = new Font(SystemFont.Bold, 10) });
+            displayHeaderRow.Items.Add(checkBoxes["bShowPolygon"]);
+            if (!isSurface) displayHeaderRow.Items.Add(checkBoxes["bShowGeom"]);
+            root.Items.Add(displayHeaderRow);
+
             var displayGroup = new StackLayout { Spacing = 4, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            
-            var dispChkStack = new TableLayout { Spacing = new Size(8, 4) };
-            dispChkStack.Rows.Add(new TableRow(checkBoxes["bShowGeom"], checkBoxes["bShowPolygon"], new TableCell { ScaleWidth = true }));
-            
-            // Changed back to DynamicLayout: Trailing 'null' prevents the right-justified stretching
             var analysisGrid = new DynamicLayout { Spacing = new Size(4, 4) };
-            analysisGrid.AddRow(
-                checkBoxes["bShowGraph"], 
-                Gap(), 
-                labels["iGraphScale"], Wrap(numericSteppers["iGraphScale"]), 
-                Gap(), 
-                labels["iGraphDensity"], Wrap(numericSteppers["iGraphDensity"]),
-                null
-            );
             
-            displayGroup.Items.Add(dispChkStack);
-            displayGroup.Items.Add(analysisGrid);
+            if (isSurface)
+            {
+                analysisGrid.AddRow(
+                    checkBoxes["bShowGraph"], Gap(), 
+                    labels["iGraphScale"], Wrap(numericSteppers["iGraphScale"]), Gap(), 
+                    labels["iGraphDensity"], Wrap(numericSteppers["iGraphDensity"]), null
+                );
+                
+                displayGroup.Items.Add(analysisGrid);
+                displayGroup.Items.Add(new Label { Height = 2 });
+                
+                var nativeRow = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 12, VerticalContentAlignment = VerticalAlignment.Center };
+                nativeRow.Items.Add(checkBoxes["bUseNativePreview"]);
+                nativeRow.Items.Add(checkBoxes["bShowGeom"]);
+                displayGroup.Items.Add(nativeRow);
+                displayGroup.Items.Add(new Label { Height = 2 });
+                
+                var conduitModesLayout = new DynamicLayout { Spacing = new Size(8, 4) };
+                conduitModesLayout.AddRow(
+                    checkBoxes["bShowWireframe"], 
+                    radioButtons["rbNoShading"], 
+                    radioButtons["rbShaded"], 
+                    hasZebra ? radioButtons["rbZebra"] : null, 
+                    null
+                );
+                
+                if (hasEmap || hasDraft || hasCurv)
+                {
+                    conduitModesLayout.AddRow(
+                        null, 
+                        hasEmap ? radioButtons["rbEmap"] : null, 
+                        hasDraft ? radioButtons["rbDraft"] : null, 
+                        hasCurv ? radioButtons["rbCurv"] : null, 
+                        null
+                    );
+                }
+                displayGroup.Items.Add(conduitModesLayout);
+            }
+            else
+            {
+                analysisGrid.AddRow(
+                    checkBoxes["bShowGraph"], Gap(), 
+                    labels["iGraphScale"], Wrap(numericSteppers["iGraphScale"]), Gap(), 
+                    labels["iGraphDensity"], Wrap(numericSteppers["iGraphDensity"]), null
+                );
+                displayGroup.Items.Add(analysisGrid);
+            }
+            
             root.Items.Add(displayGroup);
             root.Items.Add(new Label { Height = 4 });
 
@@ -340,21 +366,17 @@ namespace CADacombs.Core
 
             Content = root;
             AutoSize = true;
-            Resizable = false;
+            Resizable = true;
         }
 
         protected virtual void OnUpgradeClicked(object sender, EventArgs e) { }
         
         protected void OnResetValuesClick(object sender, EventArgs e)
         {
-            // Temporarily pause auto-updating so we don't trigger 6 separate preview recalculations
             _autoUpdating = true;
-            
-            // Reset the underlying scale tracking variables
             _exactScalePicked = 1.0;
             _exactScaleOpp = 1.0;
 
-            // Reset the text boxes
             textBoxes["fScale_Picked"].Text = "1.0000";
             textBoxes["fSlideG2_Picked"].Text = "0.0000";
             textBoxes["fSlideG3_Picked"].Text = "0.0000";
@@ -363,7 +385,6 @@ namespace CADacombs.Core
             textBoxes["fSlideG2_Opp"].Text = "0.0000";
             textBoxes["fSlideG3_Opp"].Text = "0.0000";
 
-            // Return all jog sliders to their center zero positions
             foreach (var key in sliders.Keys)
             {
                 sliders[key].Value = 0;
@@ -371,19 +392,13 @@ namespace CADacombs.Core
             }
 
             _autoUpdating = false;
-            
-            // Fire a single unified preview update
             UpdatePreview();
         }
 
         protected void UpdateSliderRanges()
         {
             int steps = int.Parse(dropDowns["iSliderSteps"].SelectedValue.ToString());
-            foreach (var s in sliders.Values)
-            {
-                s.MinValue = -steps;
-                s.MaxValue = steps;
-            }
+            foreach (var s in sliders.Values) { s.MinValue = -steps; s.MaxValue = steps; }
         }
 
         protected void OnSliderStepsChanged(object sender, EventArgs e) => UpdateSliderRanges();
@@ -433,7 +448,6 @@ namespace CADacombs.Core
         {
             if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1)
             {
-                // Determine the direction of the sync based on which control fired the event
                 bool fromOpp = sourceKey != null && sourceKey.Contains("Opp");
 
                 string srcScale = fromOpp ? "fScale_Opp" : "fScale_Picked";
@@ -446,18 +460,12 @@ namespace CADacombs.Core
                 string dstG3 = fromOpp ? "fSlideG3_Picked" : "fSlideG3_Opp";
 
                 bool prevAuto = _autoUpdating;
-                _autoUpdating = true; // Suspend events to prevent recursive UI loops
+                _autoUpdating = true; 
 
-                if (textBoxes[dstScale].Text != textBoxes[srcScale].Text)
-                    textBoxes[dstScale].Text = textBoxes[srcScale].Text;
-                
-                if (textBoxes[dstG2].Text != textBoxes[srcG2].Text)
-                    textBoxes[dstG2].Text = textBoxes[srcG2].Text;
-                    
-                if (textBoxes[dstG3].Text != textBoxes[srcG3].Text)
-                    textBoxes[dstG3].Text = textBoxes[srcG3].Text;
+                if (textBoxes[dstScale].Text != textBoxes[srcScale].Text) textBoxes[dstScale].Text = textBoxes[srcScale].Text;
+                if (textBoxes[dstG2].Text != textBoxes[srcG2].Text) textBoxes[dstG2].Text = textBoxes[srcG2].Text;
+                if (textBoxes[dstG3].Text != textBoxes[srcG3].Text) textBoxes[dstG3].Text = textBoxes[srcG3].Text;
 
-                // Safely sync the underlying precision trackers
                 if (fromOpp) _exactScalePicked = _exactScaleOpp;
                 else _exactScaleOpp = _exactScalePicked;
 
@@ -468,11 +476,8 @@ namespace CADacombs.Core
         protected void OnContinuityChanged(object sender, EventArgs e)
         {
             if (_autoUpdating) return;
-
-            if (sender == radioButtonLists["idxCont_Picked"])
-                _lastClickedCont = 0;
-            else if (sender == radioButtonLists["idxCont_Opp"])
-                _lastClickedCont = 1;
+            if (sender == radioButtonLists["idxCont_Picked"]) _lastClickedCont = 0;
+            else if (sender == radioButtonLists["idxCont_Opp"]) _lastClickedCont = 1;
 
             UpdateControlStates();
             UpdatePreview();
@@ -481,8 +486,7 @@ namespace CADacombs.Core
         protected void OnLinkedModeChanged(object sender, EventArgs e)
         {
             UpdateControlStates();
-            if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1) 
-                SyncLinkedControls("Picked"); // Default flow when turning link on
+            if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1) SyncLinkedControls("Picked"); 
             UpdatePreview();
         }
 
@@ -538,7 +542,6 @@ namespace CADacombs.Core
             RhinoDoc.ActiveDoc.Views.Redraw();
         }
 
-        // Stepper Logic
         protected void StartHoldTimer(int direction, string key)
         {
             activeStepperKey = key;
@@ -556,10 +559,7 @@ namespace CADacombs.Core
             double? incrVal = ParseToFloat(textBoxes["fIncrement"].Text);
             if (incrVal == null) return;
 
-            double? currentVal = key.Contains("Scale") 
-                ? (key.Contains("Picked") ? _exactScalePicked : _exactScaleOpp) 
-                : ParseToFloat(textBoxes[key].Text);
-
+            double? currentVal = key.Contains("Scale") ? (key.Contains("Picked") ? _exactScalePicked : _exactScaleOpp) : ParseToFloat(textBoxes[key].Text);
             if (currentVal == null) return;
 
             double newVal = currentVal.Value + (incrVal.Value * direction);
@@ -602,19 +602,17 @@ namespace CADacombs.Core
             EndBulgeOptions.LinkedEnds = radioButtonLists["bLinkedEnds"].SelectedIndex == 1;
             EndBulgeOptions.SliderStepsIndex = dropDowns["iSliderSteps"].SelectedIndex;
             
-            if (ParseToFloat(textBoxes["fIncrement"].Text) is double i) EndBulgeOptions.Increment = i;
+            if (checkBoxes.ContainsKey("bUseNativePreview")) EndBulgeOptions.UseNativePreview = checkBoxes["bUseNativePreview"].Checked ?? false;
 
+            if (ParseToFloat(textBoxes["fIncrement"].Text) is double i) EndBulgeOptions.Increment = i;
             if (ParseToFloat(textBoxes["fScale_Picked"].Text) is double sp) EndBulgeOptions.ScalePicked = sp;
             if (ParseToFloat(textBoxes["fSlideG2_Picked"].Text) is double s2p) EndBulgeOptions.SlideG2Picked = s2p;
             if (ParseToFloat(textBoxes["fSlideG3_Picked"].Text) is double s3p) EndBulgeOptions.SlideG3Picked = s3p;
-
             if (ParseToFloat(textBoxes["fScale_Opp"].Text) is double so) EndBulgeOptions.ScaleOpp = so;
             if (ParseToFloat(textBoxes["fSlideG2_Opp"].Text) is double s2o) EndBulgeOptions.SlideG2Opp = s2o;
             if (ParseToFloat(textBoxes["fSlideG3_Opp"].Text) is double s3o) EndBulgeOptions.SlideG3Opp = s3o;
-
             EndBulgeOptions.ContinuityPicked = radioButtonLists["idxCont_Picked"].SelectedIndex;
             EndBulgeOptions.ContinuityOpp = radioButtonLists["idxCont_Opp"].SelectedIndex;
-            
             EndBulgeOptions.ShowGeom = checkBoxes["bShowGeom"].Checked ?? true;
             EndBulgeOptions.ShowPolygon = checkBoxes["bShowPolygon"].Checked ?? true;
             EndBulgeOptions.ShowGraph = checkBoxes["bShowGraph"].Checked ?? true;
@@ -637,7 +635,6 @@ namespace CADacombs.Core
                 Close();
                 return;
             }
-
             SaveSettings();
             DialogOk = true;
             Result = true;

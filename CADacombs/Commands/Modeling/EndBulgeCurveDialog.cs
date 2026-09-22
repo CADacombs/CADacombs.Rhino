@@ -6,10 +6,6 @@ using CADacombs.Core;
 
 namespace CADacombs.Commands.Modeling
 {
-    /// <summary>
-    /// The curve-specific implementation of the EndBulge dialog.
-    /// Handles curve point logic, overrides preview updates, and manages slider limits.
-    /// </summary>
     public class EndBulgeCurveDialog : EndBulgeDialog
     {
         private ObjRef _objRef;
@@ -34,16 +30,27 @@ namespace CADacombs.Commands.Modeling
             int newDeg = currentDeg % 2 == 0 ? currentDeg + 1 : currentDeg + 2;
             
             _ncIn.IncreaseDegree(newDeg);
+
+            // Capture the current continuity indices before recalculating limits
+            int pIdx = radioButtonLists["idxCont_Picked"].SelectedIndex;
+            int oIdx = radioButtonLists["idxCont_Opp"].SelectedIndex;
+
             RefreshTopologyLimits();
             
-            // --- NEW: Auto-upgrade continuity to highest available (N/2) ---
-            int maxSafeCont = _ncIn.Points.Count / 2;
+            _ncIn.ClosestPoint(_objRef.SelectionPoint(), out double t_AtPicked);
+            bool pickedIsT1 = t_AtPicked > _ncIn.Domain.Mid;
+            
+            bool canG3Picked = EndBulgeMath.CanMaintainG3(_ncIn, pickedIsT1);
+            bool canG3Opp = EndBulgeMath.CanMaintainG3(_ncIn, !pickedIsT1);
+
             bool prevAuto = _autoUpdating;
             _autoUpdating = true;
-            radioButtonLists["idxCont_Picked"].SelectedIndex = maxSafeCont;
-            radioButtonLists["idxCont_Opp"].SelectedIndex = maxSafeCont;
+            
+            // Select next higher continuity, securely clamped to available bounds
+            radioButtonLists["idxCont_Picked"].SelectedIndex = Math.Min(pIdx + 1, canG3Picked ? 4 : 3);
+            radioButtonLists["idxCont_Opp"].SelectedIndex = Math.Min(oIdx + 1, canG3Opp ? 4 : 3);
+            
             _autoUpdating = prevAuto;
-            // ---------------------------------------------------------------
             
             UpdateControlStates();
             UpdatePreview();
@@ -54,7 +61,6 @@ namespace CADacombs.Commands.Modeling
             int N = _ncIn.Points.Count;
             int currentDeg = _ncIn.Degree;
 
-            // Button Logic
             if (currentDeg >= 7)
             {
                 btnUpgrade.Visible = false;
@@ -63,11 +69,9 @@ namespace CADacombs.Commands.Modeling
             {
                 btnUpgrade.Visible = true;
                 int nextDeg = currentDeg % 2 == 0 ? currentDeg + 1 : currentDeg + 2;
-                // Add leading/trailing spaces for 5px visual padding in Eto
-                btnUpgrade.Text = $"  Upgrade to Deg {nextDeg}  "; 
+                btnUpgrade.Text = $"  Upgrade Deg {currentDeg} to {nextDeg}  "; 
             }
 
-            // Strict N/2 Clamping
             bool prevAuto = _autoUpdating;
             _autoUpdating = true; 
 
@@ -124,25 +128,23 @@ namespace CADacombs.Commands.Modeling
             int idxCont_Picked = radioButtonLists["idxCont_Picked"].SelectedIndex;
             int idxCont_Opp = radioButtonLists["idxCont_Opp"].SelectedIndex;
             
-            // Validate and downgrade the opposite side if they demand too many CVs
             int N = _ncIn.Points.Count;
             if (idxCont_Picked + idxCont_Opp > N)
             {
                 if (!_autoUpdating)
                 {
                     _autoUpdating = true;
-                    if (_lastClickedCont == 1) // Opp was clicked, downgrade Picked
+                    if (_lastClickedCont == 1) 
                     {
                         idxCont_Picked = Math.Max(0, N - idxCont_Opp);
                         radioButtonLists["idxCont_Picked"].SelectedIndex = idxCont_Picked;
                     }
-                    else // Picked was clicked, downgrade Opp
+                    else 
                     {
                         idxCont_Opp = Math.Max(0, N - idxCont_Picked);
                         radioButtonLists["idxCont_Opp"].SelectedIndex = idxCont_Opp;
                     }
 
-                    // FORCE UNLINK: If the UI had to be downgraded, break the link immediately
                     if (radioButtonLists["bLinkedEnds"].SelectedIndex == 1)
                     {
                         radioButtonLists["bLinkedEnds"].SelectedIndex = 0;
@@ -150,7 +152,6 @@ namespace CADacombs.Commands.Modeling
                     }
                     else
                     {
-                        // NEW: In Independent mode, manually refresh the sliders to match the newly downgraded radio button
                         UpdateControlStates();
                     }
 
@@ -158,7 +159,7 @@ namespace CADacombs.Commands.Modeling
                 }
             }
             
-            bool bDebug = false; // Disconnected from UI for safe removal
+            bool bDebug = false; 
 
             _ncIn.ClosestPoint(_objRef.SelectionPoint(), out double t_AtPicked);
             bool pickedIsT1 = t_AtPicked > _ncIn.Domain.Mid;
@@ -167,7 +168,6 @@ namespace CADacombs.Commands.Modeling
             double sT0, sT1, g2T0, g2T1, g3T0, g3T1;
             int iGT0, iGT1;
 
-            // Route the UI values to the correct ends of the underlying NurbsCurve (T0 vs T1)
             if (pickedIsT1)
             {
                 iPickedEnd = 1;
@@ -183,7 +183,6 @@ namespace CADacombs.Commands.Modeling
                 iGT0 = idxCont_Picked - 1; iGT1 = idxCont_Opp - 1;
             }
 
-            // Call the core math engine
             var result = EndBulgeMath.CreateCurve(
                 _ncIn,
                 sT0, g2T0, g3T0,
@@ -199,7 +198,6 @@ namespace CADacombs.Commands.Modeling
                 int actual_Picked = pickedIsT1 ? actual_T1 : actual_T0;
                 int actual_Opp = pickedIsT1 ? actual_T0 : actual_T1;
 
-                // Sync UI down-grades if the math engine detects a point allocation overlap
                 if (!_autoUpdating)
                 {
                     _autoUpdating = true;
@@ -235,6 +233,13 @@ namespace CADacombs.Commands.Modeling
             debounceTimer.Start();
         }
 
+        protected override void OnDebounceTimerElapsed(object sender, EventArgs e)
+        {
+            base.OnDebounceTimerElapsed(sender, e);
+            // Added to guarantee any lazy curve drawing catches up smoothly
+            RhinoDoc.ActiveDoc.Views.Redraw();
+        }
+
         protected override void UpdateControlStates()
         {
             if (_ncIn == null) return;
@@ -245,22 +250,18 @@ namespace CADacombs.Commands.Modeling
 
             int N = _ncIn.Points.Count;
 
-            // NEW: Enforce strict symmetry for continuity constraints in Linked mode
             if (isLinked)
             {
-                // Sync to the side that was just clicked. (If Linked was just toggled, default to syncing to Picked)
                 int target = (_lastClickedCont == 1) ? idxOpp : idxPicked;
                 
-                // If the requested continuity exceeds symmetrical point availability, downgrade it
                 if (target * 2 > N)
                 {
                     target = N / 2;
                 }
 
-                // Force the UI radio buttons to match immediately
                 if (idxPicked != target || idxOpp != target)
                 {
-                    _autoUpdating = true; // Prevent recursive preview updates
+                    _autoUpdating = true; 
                     radioButtonLists["idxCont_Picked"].SelectedIndex = target;
                     radioButtonLists["idxCont_Opp"].SelectedIndex = target;
                     idxPicked = target;
@@ -300,7 +301,6 @@ namespace CADacombs.Commands.Modeling
 
             if (isLinked)
             {
-                // NEW: In Linked mode, any leftover odd middle point cannot be used symmetrically, so it is ignored.
                 int half = free / 2;
                 scaleLimitP = allocP + half;
                 scaleLimitO = allocO + half;
@@ -321,7 +321,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            // Determine if the active continuity tier permits the controls (2 = G1, 3 = G2, 4 = G3)
             bool allowScaleP = idxPicked >= 2;
             bool allowScaleO = idxOpp >= 2;
 
@@ -330,10 +329,9 @@ namespace CADacombs.Commands.Modeling
             bool allowG2O = (scaleLimitO >= 3) && (idxOpp >= 3);
             bool allowG3O = (scaleLimitO >= 4) && (idxOpp >= 4);
 
-            // Local helper to cleanly toggle UI state and safely reset values when disabled
             void ApplyControlState(string key, bool enableUI, bool forceReset, string resetText)
             {
-                if (labels.ContainsKey(key)) labels[key].Enabled = enableUI; // NEW: Grays out the text label
+                if (labels.ContainsKey(key)) labels[key].Enabled = enableUI; 
 
                 textBoxes[key].Enabled = enableUI;
                 btnUp[key].Enabled = enableUI;
@@ -343,20 +341,17 @@ namespace CADacombs.Commands.Modeling
                 if (forceReset && textBoxes[key].Text != resetText)
                 {
                     bool prevAuto = _autoUpdating;
-                    _autoUpdating = true; // Suspend events to prevent double-firing UpdatePreview
+                    _autoUpdating = true; 
                     textBoxes[key].Text = resetText;
-                    sliders[key].Value = 0; // 0 is the center/default physical position for all your sliders
+                    sliders[key].Value = 0; 
                     sliderPrevVals[key] = 0;
                     _autoUpdating = prevAuto;
                 }
             }
 
-            // Update Picked side
             ApplyControlState("fScale_Picked", allowScaleP, !allowScaleP, "1.0000");
             ApplyControlState("fSlideG2_Picked", allowG2P, !allowG2P, "0.0000");
             ApplyControlState("fSlideG3_Picked", allowG3P, !allowG3P, "0.0000");
-            
-            // Update Opposite side (Now perfectly mirrors Picked side logic so either side can drive in Linked mode)
             ApplyControlState("fScale_Opp", allowScaleO, !allowScaleO, "1.0000");
             ApplyControlState("fSlideG2_Opp", allowG2O, !allowG2O, "0.0000");
             ApplyControlState("fSlideG3_Opp", allowG3O, !allowG3O, "0.0000");

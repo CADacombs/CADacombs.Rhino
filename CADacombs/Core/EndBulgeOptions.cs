@@ -26,9 +26,10 @@ namespace CADacombs.Core
         // ----------------------------------------------------
         public static bool ShowPolygon { get; set; } = true;
         public static bool ShowGeom { get; set; } = true;
-        public static bool ShowGraph { get; set; } = true;
+        public static bool ShowGraph { get; set; } = false;
         public static int GraphScale { get; set; } = 100;
         public static int GraphDensity { get; set; } = 1;
+        public static bool UseNativePreview { get; set; } = false;
 
         // ----------------------------------------------------
         // Picked End / Edge States

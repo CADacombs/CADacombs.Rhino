@@ -13,6 +13,17 @@
             "preLaunchTask": "build-debug"
         },
         {
+            "name": "Launch Rhino 9 (Debug)",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "C:\\Program Files\\Rhino 9 WIP\\System\\Rhino.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "preLaunchTask": "build-debug"
+        },
+        {
             "name": "Attach to Rhino",
             "type": "coreclr",
             "request": "attach",

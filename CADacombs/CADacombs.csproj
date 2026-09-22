@@ -9,7 +9,7 @@
     
     <AssemblyName>CADacombs</AssemblyName>
     <Title>CADacombs for Rhino</Title>
-    <Version>0.2.7</Version>
+    <Version>0.2.8</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>A growing collection of tools.</Description>
     <Company>Steven P. Burzinski</Company>

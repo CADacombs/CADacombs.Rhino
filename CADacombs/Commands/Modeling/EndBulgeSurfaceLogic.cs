@@ -16,9 +16,6 @@ namespace CADacombs.Commands.Modeling
     {
         public static Result ExecuteWithRef(RhinoDoc doc, bool isInteractive, ObjRef objRef)
         {
-            // --- NEW: Strict Symmetrical Point-Count Clamping ---
-            // Enforces the N/2 ceiling independently on both sides so neither side
-            // can deform the opposite edge on geometries with low point counts.
             var edge = objRef.Trim()?.Edge ?? objRef.Edge();
             if (edge != null)
             {
@@ -37,12 +34,7 @@ namespace CADacombs.Commands.Modeling
                     double dV1 = Math.Abs(domV.Max - v);
                     double minD = Math.Min(Math.Min(dU0, dU1), Math.Min(dV0, dV1));
 
-                    // Determine if the cross-section spans U or V
                     int N = (minD == dU0 || minD == dU1) ? nsIn.Points.CountU : nsIn.Points.CountV;
-
-                    #if DEBUG
-                    RhinoApp.WriteLine($"[DEBUG LOGIC] Surface N calculated as: {N}");
-                    #endif
 
                     EndBulgeOptions.ContinuityPicked = Math.Min(EndBulgeOptions.ContinuityPicked, N / 2);
                     EndBulgeOptions.ContinuityOpp = Math.Min(EndBulgeOptions.ContinuityOpp, N / 2);
@@ -74,11 +66,12 @@ namespace CADacombs.Commands.Modeling
             var conduit = new EndBulgeSurfaceConduit();
             dialog.BaseConduit = conduit;
 
-            // --- FIXED: Suspend undo tracking during initial preview hide ---
             bool prevUndo = doc.UndoRecordingEnabled;
+            bool wasModified = doc.Modified;
             doc.UndoRecordingEnabled = false;
             dialog.UpdatePreview();
             doc.UndoRecordingEnabled = prevUndo;
+            doc.Modified = wasModified;
 
             conduit.Enabled = true;
             doc.Views.Redraw();
@@ -87,19 +80,25 @@ namespace CADacombs.Commands.Modeling
             {
                 dialog.ShowSemiModal(doc, parent);
 
+                conduit.Enabled = false;
+                
+                doc.UndoRecordingEnabled = false;
+                wasModified = doc.Modified;
+                
+                if (dialog.TempPreviewId != Guid.Empty)
+                {
+                    doc.Objects.Delete(dialog.TempPreviewId, true);
+                }
+                doc.Objects.Show(objRef.ObjectId, true);
+                
+                doc.UndoRecordingEnabled = prevUndo;
+                doc.Modified = wasModified;
+
                 if (dialog.DialogOk && conduit.Surface != null)
                 {
-                    // Only record the final user-approved bake
                     uint undoSn = doc.BeginUndoRecord("EndBulge Srf");
                     ProcessBrepObject(doc, objRef, conduit.Surface, dialog.OriginalGeom);
                     doc.EndUndoRecord(undoSn);
-                }
-                else
-                {
-                    doc.UndoRecordingEnabled = false;
-                    ReplaceAndPreserveModes(doc, objRef.ObjectId, dialog.OriginalGeom);
-                    doc.Objects.Show(objRef.ObjectId, true);
-                    doc.UndoRecordingEnabled = prevUndo;
                 }
             }
             catch (Exception ex)
@@ -108,9 +107,14 @@ namespace CADacombs.Commands.Modeling
                 RhinoApp.WriteLine($"Script Error Encountered: {ex.Message}");
 #endif
                 doc.UndoRecordingEnabled = false;
-                ReplaceAndPreserveModes(doc, objRef.ObjectId, dialog.OriginalGeom);
+                wasModified = doc.Modified;
+                if (dialog.TempPreviewId != Guid.Empty)
+                {
+                    doc.Objects.Delete(dialog.TempPreviewId, true);
+                }
                 doc.Objects.Show(objRef.ObjectId, true);
                 doc.UndoRecordingEnabled = prevUndo;
+                doc.Modified = wasModified;
             }
             finally
             {
@@ -119,6 +123,29 @@ namespace CADacombs.Commands.Modeling
             }
 
             return dialog.DialogOk ? Result.Success : Result.Cancel;
+        }
+
+        public static void CopyAnalysisModes(RhinoDoc doc, Guid sourceId, Guid targetId)
+        {
+            var srcObj = doc.Objects.FindId(sourceId);
+            var tgtObj = doc.Objects.FindId(targetId);
+            if (srcObj == null || tgtObj == null) return;
+            
+            Guid[] knownGuids = new[] {
+                VisualAnalysisMode.RhinoZebraStripeAnalysisModeId,
+                VisualAnalysisMode.RhinoEmapAnalysisModeId,
+                VisualAnalysisMode.RhinoDraftAngleAnalysisModeId,
+                VisualAnalysisMode.RhinoCurvatureColorAnalyisModeId
+            };
+
+            foreach (var guid in knownGuids)
+            {
+                var mode = VisualAnalysisMode.Find(guid);
+                if (mode != null && srcObj.InVisualAnalysisMode(mode))
+                {
+                    tgtObj.EnableVisualAnalysisMode(mode, true);
+                }
+            }
         }
 
         public static bool ReplaceAndPreserveModes(RhinoDoc doc, Guid objId, Brep newGeom)
@@ -131,7 +158,8 @@ namespace CADacombs.Commands.Modeling
             Guid[] knownGuids = new[] {
                 VisualAnalysisMode.RhinoZebraStripeAnalysisModeId,
                 VisualAnalysisMode.RhinoEmapAnalysisModeId,
-                VisualAnalysisMode.RhinoDraftAngleAnalysisModeId
+                VisualAnalysisMode.RhinoDraftAngleAnalysisModeId,
+                VisualAnalysisMode.RhinoCurvatureColorAnalyisModeId
             };
 
             foreach (var guid in knownGuids)
@@ -292,7 +320,7 @@ namespace CADacombs.Commands.Modeling
             {
                 if (EndBulgeOptions.LinkedEnds)
                 {
-                    EndBulgeOptions.ContinuityOpp = EndBulgeOptions.ContinuityPicked; // NEW: Sync continuity
+                    EndBulgeOptions.ContinuityOpp = EndBulgeOptions.ContinuityPicked;
                     EndBulgeOptions.ScaleOpp = EndBulgeOptions.ScalePicked;
                     EndBulgeOptions.SlideG2Opp = EndBulgeOptions.SlideG2Picked;
                     EndBulgeOptions.SlideG3Opp = EndBulgeOptions.SlideG3Picked;
