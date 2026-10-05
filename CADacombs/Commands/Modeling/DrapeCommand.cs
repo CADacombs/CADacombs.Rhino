@@ -1,198 +1,216 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Rhino;
 using Rhino.Commands;
 using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.Input.Custom;
+using Rhino.UI;
 using CADacombs.Core;
 
 namespace CADacombs.Commands.Modeling
 {
     public class DrapeCommand : Command
     {
-        public DrapeCommand()
-        {
-            Instance = this;
-        }
-
+        public DrapeCommand() { Instance = this; }
         public static DrapeCommand Instance { get; private set; }
-
         public override string EnglishName => "ccDrape";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            // Set initial SpanSpacing based on doc units if it hasn't been modified
             if (doc.ModelUnitSystem != UnitSystem.Inches && DrapeOptions.SpanSpacing == 1.0)
-            {
                 DrapeOptions.SpanSpacing = 25.0 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
-            }
 
-            // ---------------------------------------------------------
-            // 1. SELECT TARGET BREPS / MESHES
-            // ---------------------------------------------------------
+            List<ObjRef> targetRefs = new List<ObjRef>();
+            ObjRef startingSrfRef = null;
+
+            // 1. INITIAL TARGET SELECTION
             var goTargets = new GetObject();
             goTargets.SetCommandPrompt("Select target breps or meshes");
             goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
             goTargets.AcceptNumber(true, true);
 
-            ObjRef[] targetRefs = null;
+            if (mode == RunMode.Scripted)
+            {
+                while (true)
+                {
+                    if (!SetupAndProcessOptions(goTargets, out GetResult resTargets)) continue;
+                    if (resTargets == GetResult.Cancel) return Result.Cancel;
+                    if (resTargets == GetResult.Object)
+                    {
+                        targetRefs.AddRange(goTargets.Objects());
+                        break;
+                    }
+                }
+                return DrapeLogic.ExecuteBake(doc, targetRefs.ToArray(), startingSrfRef);
+            }
+            else
+            {
+                goTargets.GetMultiple(1, 0);
+                if (goTargets.CommandResult() != Result.Success) return goTargets.CommandResult();
+                targetRefs.AddRange(goTargets.Objects());
+            }
 
+            doc.Objects.UnselectAll();
+            doc.Views.Redraw();
+
+            var conduit = new DrapeConduit { Enabled = true };
+            Result commandResult = Result.Cancel;
+
+            // 2. INTERACTIVE DIALOG LOOP
             while (true)
             {
-                if (!SetupAndProcessOptions(goTargets, out GetResult resTargets))
-                    continue;
-
-                if (resTargets == GetResult.Cancel) return Result.Cancel;
+                RhinoApp.SetCommandPrompt("Continue in dialog");
                 
-                if (resTargets == GetResult.Object)
+                var dialog = new DrapeDialog(targetRefs.ToArray(), startingSrfRef, conduit);
+                var parent = RhinoEtoApp.MainWindowForDocument(doc);
+                dialog.ShowSemiModal(doc, parent);
+
+                if (dialog.Action == DrapeDialogAction.Ok)
                 {
-                    targetRefs = goTargets.Objects();
+                    if (dialog.ResultSurface != null)
+                    {
+                        doc.Objects.AddSurface(dialog.ResultSurface);
+                        
+                        if (startingSrfRef != null && DrapeOptions.DeleteStartingSrf)
+                            doc.Objects.Delete(startingSrfRef.ObjectId, true);
+                            
+                        commandResult = Result.Success;
+                    }
+                    break;
+                }
+                else if (dialog.Action == DrapeDialogAction.ReselectTargets)
+                {
+                    var goEdit = new GetObject();
+                    goEdit.SetCommandPrompt("Reselect target breps or meshes");
+                    goEdit.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+                    goEdit.GetMultiple(1, 0);
+                    if (goEdit.CommandResult() == Result.Success)
+                    {
+                        targetRefs.Clear();
+                        targetRefs.AddRange(goEdit.Objects());
+                    }
                     doc.Objects.UnselectAll();
-                    doc.Views.Redraw();
+                }
+                else if (dialog.Action == DrapeDialogAction.AddRemoveTargets)
+                {
+                    var goAddRem = new GetObject();
+                    goAddRem.SetCommandPrompt("Select targets to add, or Ctrl+Click to remove (press Enter when done)");
+                    goAddRem.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+                    
+                    // The magic combo to allow active viewport modification without auto-accepting
+                    goAddRem.EnablePreSelect(false, true);
+                    goAddRem.EnableClearObjectsOnEntry(false);
+                    goAddRem.DeselectAllBeforePostSelect = false;
+                    goAddRem.AlreadySelectedObjectSelect = true;
+                    
+                    foreach (var t in targetRefs) doc.Objects.Select(t.ObjectId);
+                    
+                    goAddRem.GetMultiple(1, 0);
+                    if (goAddRem.CommandResult() == Result.Success)
+                    {
+                        targetRefs.Clear();
+                        targetRefs.AddRange(goAddRem.Objects());
+                    }
+                    doc.Objects.UnselectAll();
+                    
+                    if (targetRefs.Count == 0)
+                    {
+                        RhinoApp.WriteLine("All targets removed. Drape requires at least one target.");
+                        var goResel = new GetObject();
+                        goResel.SetCommandPrompt("Reselect target breps or meshes");
+                        goResel.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+                        goResel.GetMultiple(1, 0);
+                        if (goResel.CommandResult() == Result.Success)
+                        {
+                            targetRefs.Clear();
+                            targetRefs.AddRange(goResel.Objects());
+                        }
+                    }
+                }
+                else if (dialog.Action == DrapeDialogAction.PickCustomSurface)
+                {
+                    var picked = PickCustomSurface(targetRefs);
+                    if (picked != null)
+                    {
+                        startingSrfRef = picked;
+                        DrapeOptions.UserProvidesStartingSrf = true;
+                    }
+                }
+                else if (dialog.Action == DrapeDialogAction.ClearCustomSurface)
+                {
+                    startingSrfRef = null;
+                }
+                else
+                {
+                    commandResult = Result.Cancel;
                     break;
                 }
             }
 
-            if (targetRefs == null || targetRefs.Length == 0) return Result.Cancel;
+            RhinoApp.SetCommandPrompt("");
+            conduit.Enabled = false;
+            doc.Views.Redraw();
+            return commandResult;
+        }
 
-            // ---------------------------------------------------------
-            // 2. OPTIONAL: SELECT STARTING SURFACE
-            // ---------------------------------------------------------
-            ObjRef startingSrfRef = null;
-
-            if (DrapeOptions.UserProvidesStartingSrf)
+        private ObjRef PickCustomSurface(List<ObjRef> currentTargets)
+        {
+            while (true)
             {
                 var goSrf = new GetObject();
-                goSrf.SetCommandPrompt("Select starting surface");
+                goSrf.SetCommandPrompt("Select custom starting surface");
                 goSrf.GeometryFilter = ObjectType.Surface;
                 goSrf.DisablePreSelect();
-
-                goSrf.SetCustomGeometryFilter((rhObject, geom, compIdx) =>
-                {
-                    // Ensure it wasn't selected as a target
-                    foreach (var t in targetRefs)
-                    {
-                        if (rhObject.Id == t.ObjectId) return false;
-                    }
-
-                    if (geom is Brep brep && brep.Faces.Count == 1)
-                    {
-                        return IsStartingSrfSupported(brep.Faces[0].UnderlyingSurface().ToNurbsSurface());
-                    }
-                    if (geom is Surface srf)
-                    {
-                        return IsStartingSrfSupported(srf.ToNurbsSurface());
-                    }
-                    return false;
-                });
+                goSrf.SubObjectSelect = true; 
 
                 var resSrf = goSrf.Get();
-                if (resSrf == GetResult.Cancel) return Result.Cancel;
+                if (resSrf == GetResult.Cancel) return null;
+
                 if (resSrf == GetResult.Object)
                 {
-                    startingSrfRef = goSrf.Object(0);
-                    doc.Objects.UnselectAll();
+                    ObjRef srfRef = goSrf.Object(0);
+                    RhinoDoc.ActiveDoc.Objects.UnselectAll();
+
+                    bool isTarget = false;
+                    if (currentTargets != null)
+                    {
+                        foreach (var t in currentTargets)
+                        {
+                            if (srfRef.ObjectId == t.ObjectId) { isTarget = true; break; }
+                        }
+                    }
+
+                    if (isTarget)
+                    {
+                        RhinoApp.WriteLine("Starting surface cannot be one of the target objects.");
+                        continue;
+                    }
+
+                    Surface srf = srfRef.Surface();
+                    if (srf == null && srfRef.Brep()?.Faces.Count == 1)
+                        srf = srfRef.Brep().Faces[0].UnderlyingSurface();
+
+                    if (srf == null || !IsStartingSrfSupported(srf.ToNurbsSurface()))
+                    {
+                        RhinoApp.WriteLine("Starting surface must be an open, degree-3 NURBS with only multiplicity-of-1 interior knots.");
+                        continue;
+                    }
+                    return srfRef;
                 }
             }
-
-            // ---------------------------------------------------------
-            // 3. EXECUTE LOGIC
-            // ---------------------------------------------------------
-            return DrapeLogic.Execute(doc, targetRefs, startingSrfRef);
         }
 
-        private bool SetupAndProcessOptions(GetObject go, out GetResult res)
-        {
-            go.ClearCommandOptions();
-
-            string[] targetMissesList = { "FixToStartingSrf", "UseLowestNeighborHits", "LinearlyExtrapolateFromHits" }; //[cite: 1]
-
-            // 1. Declare all option variables first (fixes CS1510)
-            var optFlip = new OptionToggle(DrapeOptions.FlipCPlane, "NegCPlaneZAxis", "PosCPlaneZAxis"); //[cite: 1]
-            var optUserSrf = new OptionToggle(DrapeOptions.UserProvidesStartingSrf, "Create", "UserProvides"); //[cite: 1]
-            var optDelSrf = new OptionToggle(DrapeOptions.DeleteStartingSrf, "No", "Yes"); //[cite: 1]
-            var optEcho = new OptionToggle(DrapeOptions.Echo, "No", "Yes"); //[cite: 1]
-            var optDebug = new OptionToggle(DrapeOptions.Debug, "No", "Yes"); //[cite: 1]
-            var optTol = new OptionDouble(DrapeOptions.Tolerance); //[cite: 1]
-            var optSpanSpace = new OptionDouble(DrapeOptions.SpanSpacing); //[cite: 1]
-            var optSpansBeyond = new OptionInteger(DrapeOptions.SpansBeyondEachSide); //[cite: 1]
-
-            int idxFlip = go.AddOptionToggle("DrapeDir", ref optFlip); //[cite: 1]
-            int idxTol = go.AddOptionDouble("fTolerance", ref optTol); //[cite: 1]
-            int idxUserSrf = go.AddOptionToggle("StartingSrf", ref optUserSrf); //[cite: 1]
-            
-            int idxSpanSpace = 0;
-            int idxSpansBeyond = 0;
-            if (!DrapeOptions.UserProvidesStartingSrf)
-            {
-                idxSpanSpace = go.AddOptionDouble("SpanSpacing", ref optSpanSpace); //[cite: 1]
-                idxSpansBeyond = go.AddOptionInteger("SpansBeyondEachSide", ref optSpansBeyond); //[cite: 1]
-            }
-
-            int idxTargetMisses = go.AddOptionList("TargetMisses", targetMissesList, DrapeOptions.TargetMisses); //[cite: 1]
-            
-            int idxDelSrf = 0;
-            if (DrapeOptions.UserProvidesStartingSrf)
-            {
-                idxDelSrf = go.AddOptionToggle("DeleteStartingSrf", ref optDelSrf); //[cite: 1]
-            }
-
-            int idxEcho = go.AddOptionToggle("Echo", ref optEcho); //[cite: 1]
-            int idxDebug = go.AddOptionToggle("Debug", ref optDebug); //[cite: 1]
-
-            res = go.GetMultiple(1, 0); // Allow multiple selection[cite: 1]
-
-            if (res == GetResult.Number)
-            {
-                if (DrapeOptions.UserProvidesStartingSrf)
-                {
-                    RhinoApp.WriteLine("Numeric input ignored."); //[cite: 1]
-                }
-                else
-                {
-                    double val = go.Number();
-                    if (val > 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance) //[cite: 1]
-                        DrapeOptions.SpanSpacing = val;
-                    else
-                        RhinoApp.WriteLine("Invalid input for tolerance."); //[cite: 1]
-                }
-                return false;
-            }
-
-            if (res == GetResult.Option) //[cite: 2]
-            {
-                var opt = go.Option(); //[cite: 2]
-                
-                // 2. Read from the Option variables' CurrentValue property (fixes CS1061)
-                if (opt.Index == idxFlip) DrapeOptions.FlipCPlane = optFlip.CurrentValue;
-                else if (opt.Index == idxTol) DrapeOptions.Tolerance = Math.Max(RhinoMath.ZeroTolerance, optTol.CurrentValue); //[cite: 1]
-                else if (opt.Index == idxUserSrf) DrapeOptions.UserProvidesStartingSrf = optUserSrf.CurrentValue;
-                else if (!DrapeOptions.UserProvidesStartingSrf && opt.Index == idxSpanSpace)
-                {
-                    if (optSpanSpace.CurrentValue > 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance) //[cite: 1]
-                        DrapeOptions.SpanSpacing = optSpanSpace.CurrentValue;
-                }
-                else if (!DrapeOptions.UserProvidesStartingSrf && opt.Index == idxSpansBeyond) DrapeOptions.SpansBeyondEachSide = optSpansBeyond.CurrentValue;
-                else if (opt.Index == idxTargetMisses) DrapeOptions.TargetMisses = opt.CurrentListOptionIndex; //[cite: 1]
-                else if (DrapeOptions.UserProvidesStartingSrf && opt.Index == idxDelSrf) DrapeOptions.DeleteStartingSrf = optDelSrf.CurrentValue;
-                else if (opt.Index == idxEcho) DrapeOptions.Echo = optEcho.CurrentValue; //[cite: 1]
-                else if (opt.Index == idxDebug) DrapeOptions.Debug = optDebug.CurrentValue; //[cite: 1]
-
-                return false; // Loop continues[cite: 2]
-            }
-
-            return true; // Break loop[cite: 2]
-        }
-
+        private bool SetupAndProcessOptions(GetObject go, out GetResult res) { res = go.Get(); return true; }
+        
         private bool IsStartingSrfSupported(NurbsSurface ns)
         {
             if (ns == null) return false;
             if (ns.Degree(0) != 3 || ns.Degree(1) != 3) return false;
             if (ns.IsClosed(0) || ns.IsClosed(1)) return false;
 
-            // Check for interior knots with multiplicity > 1
             for (int iDir = 0; iDir < 2; iDir++)
             {
                 var knots = iDir == 1 ? ns.KnotsV : ns.KnotsU;
