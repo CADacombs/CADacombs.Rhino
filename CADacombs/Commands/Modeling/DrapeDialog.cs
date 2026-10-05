@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino.DocObjects;
@@ -7,7 +8,7 @@ using CADacombs.Core;
 
 namespace CADacombs.Commands.Modeling
 {
-    public enum DrapeDialogAction { None, Ok, Cancel, AddRemoveTargets, ReselectTargets, PickCustomSurface, ClearCustomSurface }
+    public enum DrapeDialogAction { None, Ok, Cancel, AddRemoveTargets, ReselectTargets, PickCustomSurface }
 
     public class DrapeDialog : CADacombsDialogBase
     {
@@ -18,10 +19,11 @@ namespace CADacombs.Commands.Modeling
         private ObjRef _startingSrfRef;
         private DrapeConduit _conduit;
 
+        private Dictionary<string, (NurbsSurface, Brep)> _previewCache = new Dictionary<string, (NurbsSurface, Brep)>();
+
         private RadioButton _rbSelect;
         private RadioButton _rbCreate;
-        private Button _btnCustomSrf;
-        private Button _btnClearSrf;
+        private Button _btnReselSrf;
 
         private TextBox _txtSpanSpacing;
         private NumericStepper _stepSpansBeyond;
@@ -71,19 +73,22 @@ namespace CADacombs.Commands.Modeling
                 UpdateControlStates();
                 
                 if (DrapeOptions.UserProvidesStartingSrf && _startingSrfRef == null)
+                {
                     ClearPreview();
+                    Action = DrapeDialogAction.PickCustomSurface;
+                    Close();
+                }
                 else
+                {
                     UpdatePreview();
+                }
             };
             
             _rbSelect.CheckedChanged += rbChanged;
             _rbCreate.CheckedChanged += rbChanged;
 
-            _btnCustomSrf = new Button { Text = _startingSrfRef == null ? "Select..." : "Change..." };
-            _btnCustomSrf.Click += (s, e) => { Action = DrapeDialogAction.PickCustomSurface; Close(); };
-
-            _btnClearSrf = new Button { Text = "Clear", Enabled = _startingSrfRef != null };
-            _btnClearSrf.Click += (s, e) => { Action = DrapeDialogAction.ClearCustomSurface; Close(); };
+            _btnReselSrf = new Button { Text = "Reselect" };
+            _btnReselSrf.Click += (s, e) => { Action = DrapeDialogAction.PickCustomSurface; Close(); };
 
             _txtSpanSpacing = new TextBox { Text = DrapeOptions.SpanSpacing.ToString("G"), Width = 60 };
             _txtSpanSpacing.TextChanged += ResetTypingTimer;
@@ -127,26 +132,15 @@ namespace CADacombs.Commands.Modeling
             var layout = new DynamicLayout { DefaultSpacing = new Size(5, 10) };
             
             // TARGETS
+            layout.AddRow(new Label { Text = "Targets", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
+            
             var btnAddRemTargets = new Button { Text = "Add / Remove" };
             btnAddRemTargets.Click += (s, e) => { Action = DrapeDialogAction.AddRemoveTargets; Close(); };
             
             var btnReselTargets = new Button { Text = "Reselect" };
-            btnReselTargets.Click += (s, e) => { 
-                ClearPreview(); 
-                Action = DrapeDialogAction.ReselectTargets; 
-                Close(); 
-            };
+            btnReselTargets.Click += (s, e) => { ClearPreview(); Action = DrapeDialogAction.ReselectTargets; Close(); };
 
-            var targetStack = new StackLayout { 
-                Orientation = Orientation.Horizontal, 
-                Spacing = 10, 
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Items = { 
-                    new Label { Text = "Targets", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, 
-                    btnAddRemTargets, 
-                    btnReselTargets 
-                } 
-            };
+            var targetStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { btnAddRemTargets, btnReselTargets, null } };
             layout.AddRow(targetStack);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
@@ -154,7 +148,7 @@ namespace CADacombs.Commands.Modeling
             layout.AddRow(new Label { Text = "Starting surface", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var srfGrid = new DynamicLayout { Spacing = new Size(10, 5) };
-            var selectStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _btnCustomSrf, _btnClearSrf } };
+            var selectStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _btnReselSrf, null } };
             
             var createGrid = new DynamicLayout { Spacing = new Size(10, 5) };
             createGrid.AddRow(new Label { Text = "Span spacing:", VerticalAlignment = VerticalAlignment.Center }, _txtSpanSpacing, null);
@@ -198,9 +192,7 @@ namespace CADacombs.Commands.Modeling
         {
             bool isSelect = _rbSelect.Checked;
             
-            _btnCustomSrf.Enabled = isSelect;
-            _btnClearSrf.Enabled = isSelect && _startingSrfRef != null;
-
+            _btnReselSrf.Enabled = isSelect;
             _txtSpanSpacing.Enabled = !isSelect;
             _stepSpansBeyond.Enabled = !isSelect;
         }
@@ -229,7 +221,9 @@ namespace CADacombs.Commands.Modeling
         {
             if (_targetRefs == null || _targetRefs.Length == 0) return;
             
-            if (DrapeOptions.UserProvidesStartingSrf && _startingSrfRef == null)
+            bool isSelect = DrapeOptions.UserProvidesStartingSrf;
+
+            if (isSelect && _startingSrfRef == null)
             {
                 ClearPreview();
                 return;
@@ -250,10 +244,27 @@ namespace CADacombs.Commands.Modeling
             DrapeOptions.FlipCPlane = _chkFlipCPlane.Checked ?? false;
             DrapeOptions.TargetMisses = _dropTargetMisses.SelectedIndex;
 
-            ResultSurface = DrapeLogic.ComputeDrapeSurface(Rhino.RhinoDoc.ActiveDoc, _targetRefs, _startingSrfRef);
-            
-            _conduit.PreviewSurface = ResultSurface;
-            _conduit.PreviewBrep = ResultSurface?.ToBrep();
+            string cacheKey = isSelect 
+                ? $"Select_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}" 
+                : $"Create_{DrapeOptions.SpanSpacing}_{DrapeOptions.SpansBeyondEachSide}_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}";
+
+            if (_previewCache.TryGetValue(cacheKey, out var cachedData))
+            {
+                ResultSurface = cachedData.Item1;
+                _conduit.PreviewSurface = ResultSurface;
+                _conduit.PreviewBrep = cachedData.Item2;
+            }
+            else
+            {
+                ObjRef activeStartingSrf = isSelect ? _startingSrfRef : null;
+
+                ResultSurface = DrapeLogic.ComputeDrapeSurface(Rhino.RhinoDoc.ActiveDoc, _targetRefs, activeStartingSrf);
+                
+                _conduit.PreviewSurface = ResultSurface;
+                _conduit.PreviewBrep = ResultSurface?.ToBrep();
+
+                _previewCache[cacheKey] = (ResultSurface, _conduit.PreviewBrep);
+            }
 
             Rhino.RhinoDoc.ActiveDoc.Views.Redraw();
         }

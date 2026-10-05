@@ -14,7 +14,6 @@ namespace CADacombs.Commands.Modeling
     {
         private static EscapeTracker _escapeTracker;
 
-        // Helper method to mimic sc.escape_test()
         public static void CheckEscape()
         {
             if (_escapeTracker != null && _escapeTracker.IsCanceled)
@@ -23,7 +22,6 @@ namespace CADacombs.Commands.Modeling
             }
         }
 
-        // New Method for Scripted CLI execution
         public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef)
         {
             NurbsSurface nsOut = ComputeDrapeSurface(doc, targetRefs, startingSrfRef);
@@ -39,7 +37,6 @@ namespace CADacombs.Commands.Modeling
             return Result.Success;
         }
 
-        // Modified Core Logic (No Document Baking)
         public static NurbsSurface ComputeDrapeSurface(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef)
         {
             using (_escapeTracker = new EscapeTracker())
@@ -96,6 +93,18 @@ namespace CADacombs.Commands.Modeling
                     Point3d?[,] targetPts = ProjectPtsToObjs(grevillePts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
 
                     if (targetPts == null) return null;
+
+                    bool hitAnything = false;
+                    foreach (var pt in targetPts) 
+                    { 
+                        if (pt.HasValue) { hitAnything = true; break; } 
+                    }
+
+                    if (!hitAnything) 
+                    {
+                        RhinoApp.WriteLine("The starting surface completely misses the targets.");
+                        return null; 
+                    }
 
                     double zMax = HighestElevation(targetPts);
                     for (int u = 0; u < nsWIP.Points.CountU; u++)
@@ -216,7 +225,6 @@ namespace CADacombs.Commands.Modeling
                     }
                     else
                     {
-                        // Multiple hits: find the one with the highest Z elevation
                         ptsOut[u, v] = projectedPts.OrderByDescending(p => p.Z).First();
                     }
                 }
@@ -246,16 +254,13 @@ namespace CADacombs.Commands.Modeling
             return false;
         }
 
-        // -------------------------------------------------------------------------
-        // MISSING POINTS RESOLUTION
-        // -------------------------------------------------------------------------
         private static Point3d?[,] ResolveMissingPoints(Point3d?[,] targetPts, Point3d[,] grevillePts, NurbsSurface nsWIP, int iTargetMisses)
         {
             int countU = targetPts.GetLength(0);
             int countV = targetPts.GetLength(1);
             var ptsOut = (Point3d?[,])targetPts.Clone();
 
-            if (iTargetMisses == 0) // FixToStartingSrf
+            if (iTargetMisses == 0) 
             {
                 for (int u = 0; u < countU; u++)
                 {
@@ -269,7 +274,7 @@ namespace CADacombs.Commands.Modeling
                     }
                 }
             }
-            else if (iTargetMisses == 1) // UseLowestNeighborHits
+            else if (iTargetMisses == 1) 
             {
                 bool pointsAdded;
                 do
@@ -278,20 +283,17 @@ namespace CADacombs.Commands.Modeling
                     pointsAdded = AddMissingPointsLowestNeighborsBorder(ptsOut, grevillePts);
                 } while (pointsAdded);
             }
-            else if (iTargetMisses == 2) // LinearlyExtrapolateFromHits
+            else if (iTargetMisses == 2) 
             {
-                // The Python script hardcoded bLineExts1=True, bLineExts2=False. 
-                // Using the exact configuration from the Python tuple loop:
                 bool bLineExts2 = false; 
 
                 while (HasMissingPoints(ptsOut))
                 {
                     CheckEscape();
                     bool modified = AddMissingPointsAlongBorder(ptsOut, grevillePts, false, bLineExts2);
-                    if (!modified) break; // Break if no more changes can be made to avoid infinite loops
+                    if (!modified) break; 
                 }
 
-                // Fallback for any remaining missing points
                 for (int u = 0; u < countU; u++)
                 {
                     for (int v = 0; v < countV; v++)
@@ -351,7 +353,6 @@ namespace CADacombs.Commands.Modeling
             var ptsCopy = (Point3d?[,])pts.Clone();
             bool modified = false;
 
-            // Direction vectors: West, East, South, North, SW, SE, NW, NE (and whether they are diagonal)
             var dirs = new[]
             {
                 (-1, 0, false), (1, 0, false), (0, -1, false), (0, 1, false),
@@ -396,7 +397,7 @@ namespace CADacombs.Commands.Modeling
                         }
                     }
 
-                    if (closestPts.Count >= 1) // Minimum neighbor count = 1 based on script
+                    if (closestPts.Count >= 1)
                     {
                         Point3d sum = Point3d.Origin;
                         foreach (var p in closestPts) sum += p;
@@ -410,9 +411,6 @@ namespace CADacombs.Commands.Modeling
             return modified;
         }
 
-        // -------------------------------------------------------------------------
-        // SURFACE FITTING: ITERATIVE HIGH TO LOW 
-        // -------------------------------------------------------------------------
         private static NurbsSurface FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug)
         {
             var nsOut = nsIn.Duplicate() as NurbsSurface;
@@ -420,7 +418,6 @@ namespace CADacombs.Commands.Modeling
             int countV = ptsTarget.GetLength(1);
             double elevTol = 0.1 * Math.Min(RhinoDoc.ActiveDoc.ModelAbsoluteTolerance, fTolerance);
 
-            // 1. Sort and group targets by elevation
             var allTargets = new List<(int u, int v, double z)>();
             for (int u = 0; u < countU; u++)
                 for (int v = 0; v < countV; v++)
@@ -444,7 +441,6 @@ namespace CADacombs.Commands.Modeling
                 uvsInElevGroups.Last().Add((target.u, target.v));
             }
 
-            // 2. Adjust target Zs array (highest in group) and setup neighbor limits
             var zsTargets = new double[countU, countV];
             var zsMinAdjustedPerNeighbors = new double[countU, countV];
 
@@ -462,7 +458,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            // 3. Find neighbors per group
             var uvsNeighborsPerElevGroup = new List<List<(int u, int v)>>();
             var uvsNeighborsFlat = new HashSet<(int u, int v)>();
             var dirs = new[] { (-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1) };
@@ -481,7 +476,6 @@ namespace CADacombs.Commands.Modeling
                         if (currentGroupSet.Contains((uN, vN))) continue;
                         if (uvsNeighborsFlat.Contains((uN, vN))) continue;
                         
-                        // Enforce border restriction (2 < uN < CountU - 3)
                         if (uN > 2 && uN < countU - 3 && vN > 2 && vN < countV - 3)
                         {
                             neighbors.Add((uN, vN));
@@ -495,7 +489,6 @@ namespace CADacombs.Commands.Modeling
                 uvsNeighborsPerElevGroup.Add(neighbors);
             }
 
-            // 4. Initial Height Set
             double zMax = HighestElevation(ptsTarget);
 
             if (uvsInElevGroups.Count > 0)
@@ -514,7 +507,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            // 5. Iterate fitting levels
             var uvsNeighborsCumPrev = new HashSet<(int u, int v)>();
 
             for (int iGroup = 1; iGroup < uvsInElevGroups.Count; iGroup++)
@@ -525,7 +517,6 @@ namespace CADacombs.Commands.Modeling
                 foreach (var prevN in uvsNeighborsPerElevGroup[iGroup - 1]) 
                     uvsNeighborsCumPrev.Add(prevN);
 
-                // Set targets CP locations
                 foreach (var (uT, vT) in targetGroup)
                 {
                     if (uvsNeighborsCumPrev.Contains((uT, vT))) continue;
@@ -534,7 +525,6 @@ namespace CADacombs.Commands.Modeling
                     nsOut.Points.SetControlPoint(uT, vT, cp);
                 }
 
-                // Translate neighbors as low as possible
                 foreach (var (uN, vN) in neighborsOfGroup)
                 {
                     if (uvsNeighborsPerElevGroup[0].Contains((uN, vN))) continue;
@@ -543,7 +533,6 @@ namespace CADacombs.Commands.Modeling
                     nsOut.Points.SetControlPoint(uN, vN, cp);
                 }
 
-                // Binary search height adjustment for this level
                 bool needSearch = false;
                 foreach (var (uT, vT) in targetGroup)
                 {
@@ -570,7 +559,6 @@ namespace CADacombs.Commands.Modeling
                             ControlPoint cp = nsOut.Points.GetControlPoint(uN, vN);
                             double zLowest = zsMinAdjustedPerNeighbors[uN, vN];
 
-                            // Highest elevation of neighbors
                             double zHighest = double.NegativeInfinity;
                             foreach (var (du, dv) in dirs)
                             {
@@ -600,7 +588,6 @@ namespace CADacombs.Commands.Modeling
                         if (Math.Abs(fractionH - fractionL) <= 0.001) break;
                     }
 
-                    // Update zs_Min_Adjusted
                     foreach (var (uN, vN) in neighborsOfGroup)
                     {
                         zsMinAdjustedPerNeighbors[uN, vN] = nsOut.Points.GetControlPoint(uN, vN).Location.Z;
@@ -608,7 +595,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            // 6. Position points not within 3 from border nor translated
             var uvsDoneFlat = new HashSet<(int, int)>(uvsInElevGroups[0]);
             foreach (var group in uvsNeighborsPerElevGroup)
                 foreach (var pt in group)
@@ -630,9 +616,6 @@ namespace CADacombs.Commands.Modeling
             return nsOut;
         }
 
-        // -------------------------------------------------------------------------
-        // SURFACE FITTING: INDIVIDUAL POINTS (SINGLE SURFACE FALLBACK)
-        // -------------------------------------------------------------------------
         private static NurbsSurface FitIterTranslIndivPts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance)
         {
             var nsOut = nsIn.Duplicate() as NurbsSurface;

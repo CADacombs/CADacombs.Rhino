@@ -74,7 +74,7 @@ namespace CADacombs.Commands.Modeling
                     {
                         doc.Objects.AddSurface(dialog.ResultSurface);
                         
-                        if (startingSrfRef != null && DrapeOptions.DeleteStartingSrf)
+                        if (startingSrfRef != null && DrapeOptions.DeleteStartingSrf && DrapeOptions.UserProvidesStartingSrf)
                             doc.Objects.Delete(startingSrfRef.ObjectId, true);
                             
                         commandResult = Result.Success;
@@ -83,52 +83,70 @@ namespace CADacombs.Commands.Modeling
                 }
                 else if (dialog.Action == DrapeDialogAction.ReselectTargets)
                 {
+                    var oldTargets = new List<ObjRef>(targetRefs);
                     var goEdit = new GetObject();
                     goEdit.SetCommandPrompt("Reselect target breps or meshes");
                     goEdit.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
                     goEdit.GetMultiple(1, 0);
+                    
                     if (goEdit.CommandResult() == Result.Success)
                     {
                         targetRefs.Clear();
                         targetRefs.AddRange(goEdit.Objects());
                     }
+                    else
+                    {
+                        targetRefs = oldTargets; // Safely revert on cancel
+                    }
                     doc.Objects.UnselectAll();
                 }
                 else if (dialog.Action == DrapeDialogAction.AddRemoveTargets)
                 {
+                    var oldTargets = new List<ObjRef>(targetRefs);
                     var goAddRem = new GetObject();
-                    goAddRem.SetCommandPrompt("Select targets to add, or Ctrl+Click to remove (press Enter when done)");
                     goAddRem.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+
+                    // STEP 1: Auto-Load the fresh GetObject instance with the current targets
+                    if (targetRefs.Count > 0)
+                    {
+                        doc.Objects.UnselectAll();
+                        foreach (var t in targetRefs) doc.Objects.Select(t.ObjectId);
+                        doc.Views.Redraw();
+                        
+                        goAddRem.EnablePreSelect(true, true);
+                        goAddRem.GetMultiple(1, 0); // This instantly returns, loading the objects into memory
+                    }
                     
-                    // The magic combo to allow active viewport modification without auto-accepting
-                    goAddRem.EnablePreSelect(false, true);
+                    // STEP 2: Let the user natively interact with the loaded instance
+                    goAddRem.SetCommandPrompt("Select targets to add, or Ctrl+Click to remove (press Enter when done)");
+                    goAddRem.EnablePreSelect(false, true); // Do not auto-accept this time
                     goAddRem.EnableClearObjectsOnEntry(false);
                     goAddRem.DeselectAllBeforePostSelect = false;
-                    goAddRem.AlreadySelectedObjectSelect = true;
-                    
-                    foreach (var t in targetRefs) doc.Objects.Select(t.ObjectId);
+                    goAddRem.AcceptNothing(true);
                     
                     goAddRem.GetMultiple(1, 0);
-                    if (goAddRem.CommandResult() == Result.Success)
-                    {
-                        targetRefs.Clear();
-                        targetRefs.AddRange(goAddRem.Objects());
-                    }
-                    doc.Objects.UnselectAll();
                     
-                    if (targetRefs.Count == 0)
+                    if (goAddRem.CommandResult() == Result.Success || goAddRem.CommandResult() == Result.Nothing)
                     {
-                        RhinoApp.WriteLine("All targets removed. Drape requires at least one target.");
-                        var goResel = new GetObject();
-                        goResel.SetCommandPrompt("Reselect target breps or meshes");
-                        goResel.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
-                        goResel.GetMultiple(1, 0);
-                        if (goResel.CommandResult() == Result.Success)
+                        var currentList = goAddRem.Objects().ToList();
+                        
+                        if (currentList.Count == 0)
+                        {
+                            RhinoApp.WriteLine("No targets selected; reverting to previous selection.");
+                            targetRefs = oldTargets;
+                        }
+                        else
                         {
                             targetRefs.Clear();
-                            targetRefs.AddRange(goResel.Objects());
+                            targetRefs.AddRange(currentList);
                         }
                     }
+                    else
+                    {
+                        targetRefs = oldTargets;
+                    }
+                    
+                    doc.Objects.UnselectAll();
                 }
                 else if (dialog.Action == DrapeDialogAction.PickCustomSurface)
                 {
@@ -136,12 +154,8 @@ namespace CADacombs.Commands.Modeling
                     if (picked != null)
                     {
                         startingSrfRef = picked;
-                        DrapeOptions.UserProvidesStartingSrf = true;
+                        DrapeOptions.UserProvidesStartingSrf = true; 
                     }
-                }
-                else if (dialog.Action == DrapeDialogAction.ClearCustomSurface)
-                {
-                    startingSrfRef = null;
                 }
                 else
                 {
