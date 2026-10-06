@@ -6,6 +6,7 @@ namespace CADacombs.Core
 {
     public static class DrapeOptions
     {
+        public static bool HasRunBefore { get; set; } = false;
         public static Point? WindowLocation { get; set; } = null;
 
         public static double Tolerance { get; set; } = 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
@@ -15,6 +16,7 @@ namespace CADacombs.Core
         public static double SpanSpacing { get; set; } = 1.0; 
         public static int SpansBeyondEachSide { get; set; } = 3;
         
+        public static int FitMethod { get; set; } = 0; // 0: Classic, 1: Hugging, 2: Direct Relaxation
         public static int TargetMisses { get; set; } = 1;
         
         // Display States

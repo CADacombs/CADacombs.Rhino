@@ -53,6 +53,19 @@ namespace CADacombs.Commands.Modeling
                 targetRefs.AddRange(goTargets.Objects());
             }
 
+            // DYNAMIC DEFAULTING ON FIRST RUN
+            if (!DrapeOptions.HasRunBefore)
+            {
+                bool isSingleFace = false;
+                if (targetRefs.Count == 1)
+                {
+                    var geom = targetRefs[0].Geometry();
+                    if (geom is Brep b && b.Faces.Count == 1) isSingleFace = true;
+                }
+                DrapeOptions.FitMethod = isSingleFace ? 2 : 0;
+                DrapeOptions.HasRunBefore = true;
+            }
+
             doc.Objects.UnselectAll();
             doc.Views.Redraw();
 
@@ -96,7 +109,7 @@ namespace CADacombs.Commands.Modeling
                     }
                     else
                     {
-                        targetRefs = oldTargets; // Safely revert on cancel
+                        targetRefs = oldTargets; 
                     }
                     doc.Objects.UnselectAll();
                 }
@@ -106,7 +119,6 @@ namespace CADacombs.Commands.Modeling
                     var goAddRem = new GetObject();
                     goAddRem.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
 
-                    // STEP 1: Auto-Load the fresh GetObject instance with the current targets
                     if (targetRefs.Count > 0)
                     {
                         doc.Objects.UnselectAll();
@@ -114,12 +126,11 @@ namespace CADacombs.Commands.Modeling
                         doc.Views.Redraw();
                         
                         goAddRem.EnablePreSelect(true, true);
-                        goAddRem.GetMultiple(1, 0); // This instantly returns, loading the objects into memory
+                        goAddRem.GetMultiple(1, 0); 
                     }
                     
-                    // STEP 2: Let the user natively interact with the loaded instance
                     goAddRem.SetCommandPrompt("Select targets to add, or Ctrl+Click to remove (press Enter when done)");
-                    goAddRem.EnablePreSelect(false, true); // Do not auto-accept this time
+                    goAddRem.EnablePreSelect(false, true); 
                     goAddRem.EnableClearObjectsOnEntry(false);
                     goAddRem.DeselectAllBeforePostSelect = false;
                     goAddRem.AcceptNothing(true);

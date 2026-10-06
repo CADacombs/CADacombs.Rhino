@@ -25,10 +25,13 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 `ccDrape` is an advanced alternative to Rhino's native `_Drape` command, utilizing Greville point locations to fit an open, degree-3 NURBS surface precisely over target Breps and Meshes.
 
 **Key Features:**
+* **Interactive Eto Dialog:** Features a modern, stateless UI with real-time cached preview updates, robust Add/Remove target toggling, and granular numeric control over tolerances and spans.
+* **Selectable Fit Methods:** Choose between distinct algorithmic solvers depending on the target geometry:
+  * **Gravity drape (Classic skirted borders):** Employs an iterative High-to-Low elevation sorting algorithm. Quarantines border control points to ensure absolute zero clipping, ideal for vertical walls and architectural blocks.
+  * **Gravity drape (Extended full border hugging):** Modifies the gravity drape to allow border control points to participate in neighbor translations, allowing the edges to hug meshes tighter.
+  * **Direct Greville relaxation:** A direct point-relaxation solver that produces smooth, low-tension surfaces. Automatically defaulted to when draping over a single, continuous surface.
 * **Starting Surface Flexibility:** Automatically generates a starting surface based on the bounding box and span spacing of the target objects, or allows you to select your own custom starting surface.
-* **Intelligent Z-Projection:** Preserves the starting surface's X and Y control point coordinates while adjusting the Z elevations to match the target objects using Z-axis raycasting.
 * **Advanced Miss Handling:** Handles "missed" target projections with customizable resolution strategies: lock to the starting surface, use the lowest hit neighbor, or linearly extrapolate from the nearest hits.
-* **High-To-Low Fitting:** Employs an iterative High-to-Low elevation sorting algorithm to achieve a smooth, mathematically precise drape that rests seamlessly on the target without clipping through.
 
 #### 3. ccMatchSrf
 `ccMatchSrf` is a precise complement to Rhino's native `_MatchSrf`, designed to strictly preserve input knot and control point structures when matching untrimmed surface edges.

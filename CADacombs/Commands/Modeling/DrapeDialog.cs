@@ -19,7 +19,7 @@ namespace CADacombs.Commands.Modeling
         private ObjRef _startingSrfRef;
         private DrapeConduit _conduit;
 
-        private Dictionary<string, (NurbsSurface, Brep)> _previewCache = new Dictionary<string, (NurbsSurface, Brep)>();
+        private Dictionary<string, (NurbsSurface, Brep, bool)> _previewCache = new Dictionary<string, (NurbsSurface, Brep, bool)>();
 
         private RadioButton _rbSelect;
         private RadioButton _rbCreate;
@@ -27,8 +27,11 @@ namespace CADacombs.Commands.Modeling
 
         private TextBox _txtSpanSpacing;
         private NumericStepper _stepSpansBeyond;
-        private CheckBox _chkFlipCPlane;
+        
+        private DropDown _dropFitMethod;
+        private TextBox _txtTolerance;
         private DropDown _dropTargetMisses;
+        private CheckBox _chkFlipCPlane;
         
         private CheckBox _chkShowSurface;
         private CheckBox _chkShowWireframe;
@@ -96,6 +99,16 @@ namespace CADacombs.Commands.Modeling
             _stepSpansBeyond = new NumericStepper { Value = DrapeOptions.SpansBeyondEachSide, MinValue = -10, MaxValue = 50, DecimalPlaces = 0, Width = 60 };
             _stepSpansBeyond.ValueChanged += ResetTypingTimer;
 
+            _dropFitMethod = new DropDown();
+            _dropFitMethod.Items.Add("Gravity drape (Classic skirted borders)");
+            _dropFitMethod.Items.Add("Gravity drape (Extended full border hugging)");
+            _dropFitMethod.Items.Add("Direct Greville relaxation (Smooth single-surface fit)");
+            _dropFitMethod.SelectedIndex = DrapeOptions.FitMethod;
+            _dropFitMethod.SelectedIndexChanged += (s, e) => UpdatePreview();
+
+            _txtTolerance = new TextBox { Text = DrapeOptions.Tolerance.ToString("G"), Width = 60 };
+            _txtTolerance.TextChanged += ResetTypingTimer;
+
             _chkFlipCPlane = new CheckBox { Text = "Flip drape direction", Checked = DrapeOptions.FlipCPlane };
             _chkFlipCPlane.CheckedChanged += (s, e) => UpdatePreview();
 
@@ -131,7 +144,6 @@ namespace CADacombs.Commands.Modeling
         {
             var layout = new DynamicLayout { DefaultSpacing = new Size(5, 10) };
             
-            // TARGETS
             layout.AddRow(new Label { Text = "Targets", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var btnAddRemTargets = new Button { Text = "Add / Remove" };
@@ -144,7 +156,6 @@ namespace CADacombs.Commands.Modeling
             layout.AddRow(targetStack);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            // STARTING SURFACE
             layout.AddRow(new Label { Text = "Starting surface", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var srfGrid = new DynamicLayout { Spacing = new Size(10, 5) };
@@ -160,21 +171,20 @@ namespace CADacombs.Commands.Modeling
             layout.AddRow(srfGrid);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            // GENERAL
             layout.AddRow(new Label { Text = "General", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var genGrid = new DynamicLayout { Spacing = new Size(10, 5) };
+            genGrid.AddRow(new Label { Text = "Fit method:", VerticalAlignment = VerticalAlignment.Center }, _dropFitMethod, null);
+            genGrid.AddRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, _txtTolerance, null);
             genGrid.AddRow(new Label { Text = "Action for misses:", VerticalAlignment = VerticalAlignment.Center }, _dropTargetMisses, null);
             layout.AddRow(genGrid);
             layout.AddRow(_chkFlipCPlane);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            // DISPLAY
             layout.AddRow(new Label { Text = "Display", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             layout.AddRow(new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, Items = { _chkShowSurface, _chkShowWireframe, _chkShowPolygon } });
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            // BUTTONS
             var btnOk = new Button { Text = "OK" };
             btnOk.Click += (s, e) => { Action = DrapeDialogAction.Ok; Close(); };
             var btnCancel = new Button { Text = "Cancel" };
@@ -239,31 +249,45 @@ namespace CADacombs.Commands.Modeling
                 _txtSpanSpacing.BackgroundColor = Colors.LightPink;
                 return;
             }
+
+            if (double.TryParse(_txtTolerance.Text, out double tol) && tol >= Rhino.RhinoMath.ZeroTolerance)
+            {
+                DrapeOptions.Tolerance = tol;
+                _txtTolerance.BackgroundColor = Colors.White;
+            }
+            else
+            {
+                _txtTolerance.BackgroundColor = Colors.LightPink;
+                return;
+            }
                 
             DrapeOptions.SpansBeyondEachSide = (int)_stepSpansBeyond.Value;
             DrapeOptions.FlipCPlane = _chkFlipCPlane.Checked ?? false;
             DrapeOptions.TargetMisses = _dropTargetMisses.SelectedIndex;
+            DrapeOptions.FitMethod = _dropFitMethod.SelectedIndex;
 
             string cacheKey = isSelect 
-                ? $"Select_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}" 
-                : $"Create_{DrapeOptions.SpanSpacing}_{DrapeOptions.SpansBeyondEachSide}_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}";
+                ? $"Select_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}_{DrapeOptions.FitMethod}_{DrapeOptions.Tolerance}" 
+                : $"Create_{DrapeOptions.SpanSpacing}_{DrapeOptions.SpansBeyondEachSide}_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}_{DrapeOptions.FitMethod}_{DrapeOptions.Tolerance}";
 
             if (_previewCache.TryGetValue(cacheKey, out var cachedData))
             {
                 ResultSurface = cachedData.Item1;
                 _conduit.PreviewSurface = ResultSurface;
                 _conduit.PreviewBrep = cachedData.Item2;
+                _dropTargetMisses.Enabled = cachedData.Item3;
             }
             else
             {
                 ObjRef activeStartingSrf = isSelect ? _startingSrfRef : null;
 
-                ResultSurface = DrapeLogic.ComputeDrapeSurface(Rhino.RhinoDoc.ActiveDoc, _targetRefs, activeStartingSrf);
+                ResultSurface = DrapeLogic.ComputeDrapeSurface(Rhino.RhinoDoc.ActiveDoc, _targetRefs, activeStartingSrf, out bool hasMisses);
                 
                 _conduit.PreviewSurface = ResultSurface;
                 _conduit.PreviewBrep = ResultSurface?.ToBrep();
+                _dropTargetMisses.Enabled = hasMisses;
 
-                _previewCache[cacheKey] = (ResultSurface, _conduit.PreviewBrep);
+                _previewCache[cacheKey] = (ResultSurface, _conduit.PreviewBrep, hasMisses);
             }
 
             Rhino.RhinoDoc.ActiveDoc.Views.Redraw();

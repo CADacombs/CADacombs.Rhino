@@ -24,7 +24,7 @@ namespace CADacombs.Commands.Modeling
 
         public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef)
         {
-            NurbsSurface nsOut = ComputeDrapeSurface(doc, targetRefs, startingSrfRef);
+            NurbsSurface nsOut = ComputeDrapeSurface(doc, targetRefs, startingSrfRef, out _);
             if (nsOut == null) return Result.Failure;
 
             if (DrapeOptions.UserProvidesStartingSrf && DrapeOptions.DeleteStartingSrf && startingSrfRef != null)
@@ -37,8 +37,9 @@ namespace CADacombs.Commands.Modeling
             return Result.Success;
         }
 
-        public static NurbsSurface ComputeDrapeSurface(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef)
+        public static NurbsSurface ComputeDrapeSurface(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef, out bool hasMisses)
         {
+            hasMisses = false;
             using (_escapeTracker = new EscapeTracker())
             {
                 try
@@ -106,7 +107,9 @@ namespace CADacombs.Commands.Modeling
                         return null; 
                     }
 
+                    hasMisses = HasMissingPoints(targetPts);
                     double zMax = HighestElevation(targetPts);
+                    
                     for (int u = 0; u < nsWIP.Points.CountU; u++)
                     {
                         for (int v = 0; v < nsWIP.Points.CountV; v++)
@@ -116,19 +119,22 @@ namespace CADacombs.Commands.Modeling
                         }
                     }
 
-                    if (HasMissingPoints(targetPts))
+                    if (hasMisses)
                     {
                         targetPts = ResolveMissingPoints(targetPts, grevillePts, nsWIP, DrapeOptions.TargetMisses);
                     }
 
                     NurbsSurface nsOut;
-                    if (targetBreps.Count == 1 && targetMeshes.Count == 0 && targetBreps[0].Faces.Count == 1)
+                    
+                    // EXPLICIT ROUTING BASED ON UI
+                    if (DrapeOptions.FitMethod == 2)
                     {
                         nsOut = FitIterTranslIndivPts(targetPts, nsWIP, DrapeOptions.Tolerance);
                     }
                     else
                     {
-                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug);
+                        bool skirtBorders = DrapeOptions.FitMethod == 0; 
+                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, skirtBorders);
                     }
 
                     if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
@@ -411,7 +417,7 @@ namespace CADacombs.Commands.Modeling
             return modified;
         }
 
-        private static NurbsSurface FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug)
+        private static NurbsSurface FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug, bool skirtBorders)
         {
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = ptsTarget.GetLength(0);
@@ -462,6 +468,10 @@ namespace CADacombs.Commands.Modeling
             var uvsNeighborsFlat = new HashSet<(int u, int v)>();
             var dirs = new[] { (-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1) };
 
+            int borderLow = skirtBorders ? 2 : -1;
+            int uHigh = skirtBorders ? countU - 3 : countU;
+            int vHigh = skirtBorders ? countV - 3 : countV;
+
             for (int iGroup = 0; iGroup < uvsInElevGroups.Count; iGroup++)
             {
                 CheckEscape();
@@ -476,7 +486,7 @@ namespace CADacombs.Commands.Modeling
                         if (currentGroupSet.Contains((uN, vN))) continue;
                         if (uvsNeighborsFlat.Contains((uN, vN))) continue;
                         
-                        if (uN > 2 && uN < countU - 3 && vN > 2 && vN < countV - 3)
+                        if (uN > borderLow && uN < uHigh && vN > borderLow && vN < vHigh)
                         {
                             neighbors.Add((uN, vN));
                             uvsNeighborsFlat.Add((uN, vN));
@@ -600,9 +610,13 @@ namespace CADacombs.Commands.Modeling
                 foreach (var pt in group)
                     uvsDoneFlat.Add(pt);
 
-            for (int u = 3; u < countU - 3; u++)
+            int startLimit = skirtBorders ? 3 : 0;
+            int endLimitU = skirtBorders ? countU - 3 : countU;
+            int endLimitV = skirtBorders ? countV - 3 : countV;
+
+            for (int u = startLimit; u < endLimitU; u++)
             {
-                for (int v = 3; v < countV - 3; v++)
+                for (int v = startLimit; v < endLimitV; v++)
                 {
                     if (!uvsDoneFlat.Contains((u, v)) && ptsTarget[u, v].HasValue)
                     {

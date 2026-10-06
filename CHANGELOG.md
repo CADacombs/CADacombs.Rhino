@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
+## [0.2.9] - 2026-10-05
+
+### Added
+- `ccDrape`: Added a robust, stateless Eto Dialog UI replacing the legacy Python command-line flow.
+- `ccDrape`: Added a "Fit method" dropdown in the UI, allowing users to explicitly route the math engine between distinct fitting routines.
+- `ccDrape`: Added "Direct Greville relaxation (Smooth single-surface fit)" as a distinct, user-selectable fitting method for continuous sloped geometries.
+- `ccDrape`: Added a dynamic default routing mechanism; if the command is run for the first time in a session and the target is a single surface, it defaults to the Direct Greville relaxation method.
+- `ccDrape`: Added a text box for numeric "Tolerance" input directly in the General dialog section.
+- `ccDrape`: Added caching to the preview surface generation; toggling options in the dialog now instantly loads pre-computed preview meshes.
+
+### Changed
+- `ccDrape`: Restructured the mathematical core to remove hidden overrides. `FitIterTranslIndivPts` is no longer automatically forced upon single-surface targets and is now explicitly controlled by the UI.
+
+### Fixed
+- `ccDrape`: Fixed a native RhinoCommon pipeline issue where pre-selected targets could not be deselected via Ctrl+Click. The command now uses a stateless `AlreadySelectedObjectSelect` loop to perfectly mimic native highlight toggling.
+- `ccDrape`: Fixed an execution bug where the math engine would crash if the raycast `ProjectPtsToObjs` array returned entirely null values. The Dialog now safely aborts the preview and alerts the user if the starting surface completely misses the target objects.
+
 ## [0.2.8] - 2026-09-21
 
 ### Added
