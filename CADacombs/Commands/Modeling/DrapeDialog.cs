@@ -29,6 +29,7 @@ namespace CADacombs.Commands.Modeling
         private NumericStepper _stepSpansBeyond;
         
         private DropDown _dropFitMethod;
+        private Label _lblSrfWarning;
         private TextBox _txtTolerance;
         private DropDown _dropTargetMisses;
         private CheckBox _chkFlipCPlane;
@@ -103,8 +104,17 @@ namespace CADacombs.Commands.Modeling
             _dropFitMethod.Items.Add("Gravity drape (Classic skirted borders)");
             _dropFitMethod.Items.Add("Gravity drape (Extended full border hugging)");
             _dropFitMethod.Items.Add("Direct Greville relaxation (Smooth single-surface fit)");
+            _dropFitMethod.Items.Add("Direct control point projection (Fast, loose fit)");
             _dropFitMethod.SelectedIndex = DrapeOptions.FitMethod;
             _dropFitMethod.SelectedIndexChanged += (s, e) => UpdatePreview();
+
+            _lblSrfWarning = new Label 
+            { 
+                Text = "Warning: Gravity methods work best with uniform, degree-3 surfaces.", 
+                TextColor = Colors.Red, 
+                Visible = false,
+                Font = new Eto.Drawing.Font(SystemFont.Default, 8)
+            };
 
             _txtTolerance = new TextBox { Text = DrapeOptions.Tolerance.ToString("G"), Width = 60 };
             _txtTolerance.TextChanged += ResetTypingTimer;
@@ -175,6 +185,7 @@ namespace CADacombs.Commands.Modeling
             
             var genGrid = new DynamicLayout { Spacing = new Size(10, 5) };
             genGrid.AddRow(new Label { Text = "Fit method:", VerticalAlignment = VerticalAlignment.Center }, _dropFitMethod, null);
+            genGrid.AddRow(new Panel(), _lblSrfWarning, null);
             genGrid.AddRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, _txtTolerance, null);
             genGrid.AddRow(new Label { Text = "Action for misses:", VerticalAlignment = VerticalAlignment.Center }, _dropTargetMisses, null);
             layout.AddRow(genGrid);
@@ -217,6 +228,28 @@ namespace CADacombs.Commands.Modeling
         {
             _typingTimer.Stop();
             Application.Instance.AsyncInvoke(UpdatePreview);
+        }
+
+        private bool IsStartingSrfSupported(NurbsSurface ns)
+        {
+            if (ns == null) return false;
+            if (ns.Degree(0) != 3 || ns.Degree(1) != 3) return false;
+            if (ns.IsClosed(0) || ns.IsClosed(1)) return false;
+
+            for (int iDir = 0; iDir < 2; iDir++)
+            {
+                var knots = iDir == 1 ? ns.KnotsV : ns.KnotsU;
+                int degree = ns.Degree(iDir);
+                int iK = ns.IsPeriodic(iDir) ? 0 : degree;
+                int count = ns.IsPeriodic(iDir) ? knots.Count : knots.Count - degree;
+                
+                while (iK < count)
+                {
+                    if (knots.KnotMultiplicity(iK) > 1) return false;
+                    iK++;
+                }
+            }
+            return true;
         }
 
         private void ClearPreview()
@@ -265,6 +298,21 @@ namespace CADacombs.Commands.Modeling
             DrapeOptions.FlipCPlane = _chkFlipCPlane.Checked ?? false;
             DrapeOptions.TargetMisses = _dropTargetMisses.SelectedIndex;
             DrapeOptions.FitMethod = _dropFitMethod.SelectedIndex;
+
+            // Update warning visibility dynamically
+            bool showWarning = false;
+            if (isSelect && _startingSrfRef != null && (DrapeOptions.FitMethod == 0 || DrapeOptions.FitMethod == 1))
+            {
+                Surface srf = _startingSrfRef.Surface();
+                if (srf == null && _startingSrfRef.Brep()?.Faces.Count == 1)
+                    srf = _startingSrfRef.Brep().Faces[0].UnderlyingSurface();
+                    
+                if (srf != null && !IsStartingSrfSupported(srf.ToNurbsSurface()))
+                {
+                    showWarning = true;
+                }
+            }
+            _lblSrfWarning.Visible = showWarning;
 
             string cacheKey = isSelect 
                 ? $"Select_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}_{DrapeOptions.FitMethod}_{DrapeOptions.Tolerance}" 

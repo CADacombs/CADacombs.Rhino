@@ -20,13 +20,24 @@ namespace CADacombs.Commands.Modeling
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
+            // DYNAMIC DEFAULTING ON FIRST RUN
+            if (!DrapeOptions.HasRunBefore)
+            {
+                DrapeOptions.FitMethod = 0; // Default to Skirted Gravity Drop
+                DrapeOptions.HasRunBefore = true;
+            }
+
+            return RunSharedCommand(doc, mode);
+        }
+
+        public static Result RunSharedCommand(RhinoDoc doc, RunMode mode)
+        {
             if (doc.ModelUnitSystem != UnitSystem.Inches && DrapeOptions.SpanSpacing == 1.0)
                 DrapeOptions.SpanSpacing = 25.0 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
 
             List<ObjRef> targetRefs = new List<ObjRef>();
             ObjRef startingSrfRef = null;
 
-            // 1. INITIAL TARGET SELECTION
             var goTargets = new GetObject();
             goTargets.SetCommandPrompt("Select target breps or meshes");
             goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
@@ -53,26 +64,12 @@ namespace CADacombs.Commands.Modeling
                 targetRefs.AddRange(goTargets.Objects());
             }
 
-            // DYNAMIC DEFAULTING ON FIRST RUN
-            if (!DrapeOptions.HasRunBefore)
-            {
-                bool isSingleFace = false;
-                if (targetRefs.Count == 1)
-                {
-                    var geom = targetRefs[0].Geometry();
-                    if (geom is Brep b && b.Faces.Count == 1) isSingleFace = true;
-                }
-                DrapeOptions.FitMethod = isSingleFace ? 2 : 0;
-                DrapeOptions.HasRunBefore = true;
-            }
-
             doc.Objects.UnselectAll();
             doc.Views.Redraw();
 
             var conduit = new DrapeConduit { Enabled = true };
             Result commandResult = Result.Cancel;
 
-            // 2. INTERACTIVE DIALOG LOOP
             while (true)
             {
                 RhinoApp.SetCommandPrompt("Continue in dialog");
@@ -181,7 +178,7 @@ namespace CADacombs.Commands.Modeling
             return commandResult;
         }
 
-        private ObjRef PickCustomSurface(List<ObjRef> currentTargets)
+        private static ObjRef PickCustomSurface(List<ObjRef> currentTargets)
         {
             while (true)
             {
@@ -218,39 +215,17 @@ namespace CADacombs.Commands.Modeling
                     if (srf == null && srfRef.Brep()?.Faces.Count == 1)
                         srf = srfRef.Brep().Faces[0].UnderlyingSurface();
 
-                    if (srf == null || !IsStartingSrfSupported(srf.ToNurbsSurface()))
+                    if (srf == null)
                     {
-                        RhinoApp.WriteLine("Starting surface must be an open, degree-3 NURBS with only multiplicity-of-1 interior knots.");
+                        RhinoApp.WriteLine("Valid surface not found.");
                         continue;
                     }
+                    
                     return srfRef;
                 }
             }
         }
 
-        private bool SetupAndProcessOptions(GetObject go, out GetResult res) { res = go.Get(); return true; }
-        
-        private bool IsStartingSrfSupported(NurbsSurface ns)
-        {
-            if (ns == null) return false;
-            if (ns.Degree(0) != 3 || ns.Degree(1) != 3) return false;
-            if (ns.IsClosed(0) || ns.IsClosed(1)) return false;
-
-            for (int iDir = 0; iDir < 2; iDir++)
-            {
-                var knots = iDir == 1 ? ns.KnotsV : ns.KnotsU;
-                int degree = ns.Degree(iDir);
-                int iK = ns.IsPeriodic(iDir) ? 0 : degree;
-                int count = ns.IsPeriodic(iDir) ? knots.Count : knots.Count - degree;
-                
-                while (iK < count)
-                {
-                    DrapeLogic.CheckEscape();
-                    if (knots.KnotMultiplicity(iK) > 1) return false;
-                    iK++;
-                }
-            }
-            return true;
-        }
+        private static bool SetupAndProcessOptions(GetObject go, out GetResult res) { res = go.Get(); return true; }
     }
 }

@@ -90,8 +90,14 @@ namespace CADacombs.Commands.Modeling
                         if (!xformToW.IsIdentity) nsWIP.Transform(xformToW);
                     }
 
-                    Point3d[,] grevillePts = GetGrevillePoints(nsWIP);
-                    Point3d?[,] targetPts = ProjectPtsToObjs(grevillePts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
+                    // DYNAMIC RAYCAST ORIGIN
+                    Point3d[,] raycastPts;
+                    if (DrapeOptions.FitMethod == 3)
+                        raycastPts = GetControlPointLocations(nsWIP);
+                    else
+                        raycastPts = GetGrevillePoints(nsWIP);
+
+                    Point3d?[,] targetPts = ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
 
                     if (targetPts == null) return null;
 
@@ -121,21 +127,18 @@ namespace CADacombs.Commands.Modeling
 
                     if (hasMisses)
                     {
-                        targetPts = ResolveMissingPoints(targetPts, grevillePts, nsWIP, DrapeOptions.TargetMisses);
+                        targetPts = ResolveMissingPoints(targetPts, raycastPts, nsWIP, DrapeOptions.TargetMisses);
                     }
 
                     NurbsSurface nsOut;
                     
                     // EXPLICIT ROUTING BASED ON UI
-                    if (DrapeOptions.FitMethod == 2)
-                    {
-                        nsOut = FitIterTranslIndivPts(targetPts, nsWIP, DrapeOptions.Tolerance);
-                    }
+                    if (DrapeOptions.FitMethod == 3)
+                        nsOut = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP);
+                    else if (DrapeOptions.FitMethod == 2)
+                        nsOut = ProjectionMath.FitDirectGreville(targetPts, nsWIP, DrapeOptions.Tolerance);
                     else
-                    {
-                        bool skirtBorders = DrapeOptions.FitMethod == 0; 
-                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, skirtBorders);
-                    }
+                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0);
 
                     if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
 
@@ -189,6 +192,22 @@ namespace CADacombs.Commands.Modeling
                 {
                     Point2d uv = ns.Points.GetGrevillePoint(u, v);
                     pts[u, v] = ns.PointAt(uv.X, uv.Y);
+                }
+            }
+            return pts;
+        }
+
+        private static Point3d[,] GetControlPointLocations(NurbsSurface ns)
+        {
+            int countU = ns.Points.CountU;
+            int countV = ns.Points.CountV;
+            var pts = new Point3d[countU, countV];
+
+            for (int u = 0; u < countU; u++)
+            {
+                for (int v = 0; v < countV; v++)
+                {
+                    pts[u, v] = ns.Points.GetControlPoint(u, v).Location;
                 }
             }
             return pts;
@@ -260,7 +279,7 @@ namespace CADacombs.Commands.Modeling
             return false;
         }
 
-        private static Point3d?[,] ResolveMissingPoints(Point3d?[,] targetPts, Point3d[,] grevillePts, NurbsSurface nsWIP, int iTargetMisses)
+        private static Point3d?[,] ResolveMissingPoints(Point3d?[,] targetPts, Point3d[,] raycastPts, NurbsSurface nsWIP, int iTargetMisses)
         {
             int countU = targetPts.GetLength(0);
             int countV = targetPts.GetLength(1);
@@ -274,8 +293,7 @@ namespace CADacombs.Commands.Modeling
                     {
                         if (!ptsOut[u, v].HasValue)
                         {
-                            Point2d uv = nsWIP.Points.GetGrevillePoint(u, v);
-                            ptsOut[u, v] = nsWIP.PointAt(uv.X, uv.Y);
+                            ptsOut[u, v] = raycastPts[u, v]; // Naturally aligns to Greville or CP fallback
                         }
                     }
                 }
@@ -286,7 +304,7 @@ namespace CADacombs.Commands.Modeling
                 do
                 {
                     CheckEscape();
-                    pointsAdded = AddMissingPointsLowestNeighborsBorder(ptsOut, grevillePts);
+                    pointsAdded = AddMissingPointsLowestNeighborsBorder(ptsOut, raycastPts);
                 } while (pointsAdded);
             }
             else if (iTargetMisses == 2) 
@@ -296,7 +314,7 @@ namespace CADacombs.Commands.Modeling
                 while (HasMissingPoints(ptsOut))
                 {
                     CheckEscape();
-                    bool modified = AddMissingPointsAlongBorder(ptsOut, grevillePts, false, bLineExts2);
+                    bool modified = AddMissingPointsAlongBorder(ptsOut, raycastPts, false, bLineExts2);
                     if (!modified) break; 
                 }
 
@@ -317,7 +335,7 @@ namespace CADacombs.Commands.Modeling
             return ptsOut;
         }
 
-        private static bool AddMissingPointsLowestNeighborsBorder(Point3d?[,] pts, Point3d[,] grevillePts)
+        private static bool AddMissingPointsLowestNeighborsBorder(Point3d?[,] pts, Point3d[,] raycastPts)
         {
             int countU = pts.GetLength(0);
             int countV = pts.GetLength(1);
@@ -337,7 +355,7 @@ namespace CADacombs.Commands.Modeling
 
                     if (zs.Count > 0)
                     {
-                        Point3d newPt = grevillePts[u, v];
+                        Point3d newPt = raycastPts[u, v];
                         newPt.Z = zs.Min();
                         modifications.Add((u, v, newPt));
                     }
@@ -352,7 +370,7 @@ namespace CADacombs.Commands.Modeling
             return modifications.Count > 0;
         }
 
-        private static bool AddMissingPointsAlongBorder(Point3d?[,] pts, Point3d[,] grevillePts, bool bDiag, bool bLineExts)
+        private static bool AddMissingPointsAlongBorder(Point3d?[,] pts, Point3d[,] raycastPts, bool bDiag, bool bLineExts)
         {
             int countU = pts.GetLength(0);
             int countV = pts.GetLength(1);
@@ -371,7 +389,7 @@ namespace CADacombs.Commands.Modeling
                 {
                     if (ptsCopy[u, v].HasValue) continue;
 
-                    Line zLine = new Line(grevillePts[u, v], Vector3d.ZAxis);
+                    Line zLine = new Line(raycastPts[u, v], Vector3d.ZAxis);
                     var closestPts = new List<Point3d>();
 
                     foreach (var (du, dv, isDiag) in dirs)
@@ -627,65 +645,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            return nsOut;
-        }
-
-        private static NurbsSurface FitIterTranslIndivPts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance)
-        {
-            var nsOut = nsIn.Duplicate() as NurbsSurface;
-            int countU = nsIn.Points.CountU;
-            int countV = nsIn.Points.CountV;
-
-            for (int u = 0; u < countU; u++)
-            {
-                for (int v = 0; v < countV; v++)
-                {
-                    if (!ptsTarget[u, v].HasValue) continue;
-
-                    Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
-                    Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
-                    Vector3d vect = ptsTarget[u, v].Value - ptGr;
-
-                    if (vect.Length > fTolerance)
-                    {
-                        ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
-                        cp.Location = ptsTarget[u, v].Value;
-                        nsOut.Points.SetControlPoint(u, v, cp);
-                    }
-                }
-            }
-
-            for (int i = 0; i < 200; i++)
-            {
-                bool bTransPts = false;
-                for (int u = 0; u < countU; u++)
-                {
-                    for (int v = 0; v < countV; v++)
-                    {
-                        if (!ptsTarget[u, v].HasValue) continue;
-
-                        Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
-                        Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
-                        Vector3d vect = ptsTarget[u, v].Value - ptGr;
-
-                        if (vect.Length > fTolerance)
-                        {
-                            ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
-                            cp.Location += vect;
-                            nsOut.Points.SetControlPoint(u, v, cp);
-                            bTransPts = true;
-                        }
-                    }
-                }
-
-                if (!bTransPts)
-                {
-                    RhinoApp.WriteLine($"{i + 1} iterations for Grevilles to lie on target(s) within {fTolerance}.");
-                    return nsOut;
-                }
-            }
-
-            RhinoApp.WriteLine($"After 200 iterations, Grevilles still do not lie on target(s) within {fTolerance}.");
             return nsOut;
         }
     }
