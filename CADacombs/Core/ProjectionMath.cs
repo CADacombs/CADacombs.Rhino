@@ -1,18 +1,34 @@
 using System;
 using Rhino;
 using Rhino.Geometry;
+using CADacombs.Core.Reporting;
 
 namespace CADacombs.Core
 {
+    public class ProjectionResult
+    {
+        public NurbsSurface Surface { get; set; }
+        public int Iterations { get; set; }
+        public double ElapsedSeconds { get; set; }
+        public double MaxDeviation { get; set; }
+        public bool Converged { get; set; }
+        public string Message { get; set; }
+    }
+
     public static class ProjectionMath
     {
-        public static NurbsSurface FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance)
+        public static ProjectionResult FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, double timeoutSecs)
         {
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = nsIn.Points.CountU;
             int countV = nsIn.Points.CountV;
 
-            // Initially move control points whose Grevilles are not within tolerance
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int iterations = 0;
+            double maxDev = 0.0;
+            bool converged = false;
+
+            // Initial explicit snap
             for (int u = 0; u < countU; u++)
             {
                 for (int v = 0; v < countV; v++)
@@ -32,10 +48,13 @@ namespace CADacombs.Core
                 }
             }
 
-            // Iterative relaxation
-            for (int i = 0; i < 200; i++)
+            // Iterative relaxation loop bounded by timeout
+            while (sw.Elapsed.TotalSeconds < timeoutSecs)
             {
+                iterations++;
                 bool bTransPts = false;
+                maxDev = 0.0;
+
                 for (int u = 0; u < countU; u++)
                 {
                     for (int v = 0; v < countV; v++)
@@ -45,8 +64,11 @@ namespace CADacombs.Core
                         Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
                         Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
                         Vector3d vect = ptsTarget[u, v].Value - ptGr;
+                        double dist = vect.Length;
 
-                        if (vect.Length > fTolerance)
+                        if (dist > maxDev) maxDev = dist;
+
+                        if (dist > fTolerance)
                         {
                             ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
                             cp.Location += vect;
@@ -58,13 +80,32 @@ namespace CADacombs.Core
 
                 if (!bTransPts)
                 {
-                    RhinoApp.WriteLine($"{i + 1} iterations for Grevilles to lie on target(s) within {fTolerance}.");
-                    return nsOut;
+                    converged = true;
+                    break;
                 }
             }
+            sw.Stop();
 
-            RhinoApp.WriteLine($"After 200 iterations, Grevilles still do not lie on target(s) within {fTolerance}.");
-            return nsOut;
+            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+            string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
+            string tolStr = FormatUtils.FormatDistance(fTolerance, prec);
+
+            // Construct the single-line report string
+            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max deviation: {maxDevStr}.";
+            if (!converged && maxDev > fTolerance)
+            {
+                msg += $" All Greville points do not lie on target(s) within {tolStr}.";
+            }
+
+            return new ProjectionResult
+            {
+                Surface = nsOut,
+                Iterations = iterations,
+                ElapsedSeconds = sw.Elapsed.TotalSeconds,
+                MaxDeviation = maxDev,
+                Converged = converged,
+                Message = msg
+            };
         }
 
         public static NurbsSurface FitDirectControlPoints(Point3d?[,] ptsTarget, NurbsSurface nsIn)
@@ -73,7 +114,6 @@ namespace CADacombs.Core
             int countU = nsIn.Points.CountU;
             int countV = nsIn.Points.CountV;
 
-            // Direct 1:1 Control Point Translation (No iteration needed)
             for (int u = 0; u < countU; u++)
             {
                 for (int v = 0; v < countV; v++)

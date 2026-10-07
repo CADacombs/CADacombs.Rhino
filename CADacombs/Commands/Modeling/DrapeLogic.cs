@@ -22,24 +22,39 @@ namespace CADacombs.Commands.Modeling
             }
         }
 
-        public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef)
+        public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs)
         {
-            NurbsSurface nsOut = ComputeDrapeSurface(doc, targetRefs, startingSrfRef, out _);
-            if (nsOut == null) return Result.Failure;
+            var results = ComputeDrapeSurfaces(doc, targetRefs, startingSrfRefs, out _, out List<string> messages, out _);
+            if (results == null || results.Count == 0) return Result.Failure;
 
-            if (DrapeOptions.UserProvidesStartingSrf && DrapeOptions.DeleteStartingSrf && startingSrfRef != null)
+            foreach (var msg in messages)
             {
-                doc.Objects.Delete(startingSrfRef.ObjectId, true);
+                if (!string.IsNullOrEmpty(msg)) RhinoApp.WriteLine(msg);
             }
 
-            doc.Objects.AddSurface(nsOut);
+            if (DrapeOptions.UserProvidesStartingSrf && DrapeOptions.DeleteStartingSrf && startingSrfRefs != null)
+            {
+                foreach (var srfRef in startingSrfRefs)
+                {
+                    doc.Objects.Delete(srfRef.ObjectId, true);
+                }
+            }
+
+            foreach (var ns in results)
+            {
+                doc.Objects.AddSurface(ns);
+            }
             doc.Views.Redraw();
             return Result.Success;
         }
 
-        public static NurbsSurface ComputeDrapeSurface(RhinoDoc doc, ObjRef[] targetRefs, ObjRef startingSrfRef, out bool hasMisses)
+        public static List<NurbsSurface> ComputeDrapeSurfaces(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, out bool anyPartialMisses, out List<string> messages, out double maxDeviation, Action progressCallback = null)
         {
-            hasMisses = false;
+            anyPartialMisses = false;
+            messages = new List<string>();
+            maxDeviation = 0.0;
+            var outSurfaces = new List<NurbsSurface>();
+
             using (_escapeTracker = new EscapeTracker())
             {
                 try
@@ -50,12 +65,29 @@ namespace CADacombs.Commands.Modeling
                     foreach (var r in targetRefs)
                     {
                         var geom = r.Geometry();
-                        if (geom is Brep b) targetBreps.Add(b);
+                        
+                        if (geom is SubD subD)
+                        {
+                            var limitMesh = Mesh.CreateFromSubD(subD, 3);
+                            if (limitMesh != null) targetMeshes.Add(limitMesh);
+                            else
+                            {
+                                var proxyBrep = subD.ToBrep(new SubDToBrepOptions());
+                                if (proxyBrep != null) targetBreps.Add(proxyBrep);
+                            }
+                        }
+                        else if (geom is Brep b) targetBreps.Add(b);
                         else if (geom is Mesh m) targetMeshes.Add(m);
                     }
 
+                    if (targetBreps.Count == 0 && targetMeshes.Count == 0)
+                    {
+                        RhinoApp.WriteLine("No valid target geometry could be extracted.");
+                        return outSurfaces;
+                    }
+
                     var view = doc.Views.ActiveView;
-                    if (view == null) return null;
+                    if (view == null) return outSurfaces;
                     
                     Plane cPlane = view.ActiveViewport.ConstructionPlane();
                     if (DrapeOptions.FlipCPlane) cPlane.Flip();
@@ -72,81 +104,109 @@ namespace CADacombs.Commands.Modeling
                         foreach (var m in targetMeshes) m.Transform(xformToW);
                     }
 
-                    NurbsSurface nsWIP;
-                    if (startingSrfRef == null)
+                    int totalSurfaces = (startingSrfRefs != null && startingSrfRefs.Count > 0) ? startingSrfRefs.Count : 1;
+                    int totalMisses = 0;
+
+                    for (int i = 0; i < totalSurfaces; i++)
                     {
-                        var allGeom = new List<GeometryBase>();
-                        allGeom.AddRange(targetBreps);
-                        allGeom.AddRange(targetMeshes);
-                        nsWIP = CreateStartingSurface(allGeom, DrapeOptions.SpanSpacing, DrapeOptions.SpansBeyondEachSide);
-                    }
-                    else
-                    {
-                        Surface srf = startingSrfRef.Surface();
-                        if (srf == null && startingSrfRef.Brep()?.Faces.Count == 1)
-                            srf = startingSrfRef.Brep().Faces[0].UnderlyingSurface();
-                        
-                        nsWIP = srf.ToNurbsSurface();
-                        if (!xformToW.IsIdentity) nsWIP.Transform(xformToW);
-                    }
+                        NurbsSurface nsWIP = null;
 
-                    // DYNAMIC RAYCAST ORIGIN
-                    Point3d[,] raycastPts;
-                    if (DrapeOptions.FitMethod == 3)
-                        raycastPts = GetControlPointLocations(nsWIP);
-                    else
-                        raycastPts = GetGrevillePoints(nsWIP);
-
-                    Point3d?[,] targetPts = ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
-
-                    if (targetPts == null) return null;
-
-                    bool hitAnything = false;
-                    foreach (var pt in targetPts) 
-                    { 
-                        if (pt.HasValue) { hitAnything = true; break; } 
-                    }
-
-                    if (!hitAnything) 
-                    {
-                        RhinoApp.WriteLine("The starting surface completely misses the targets.");
-                        return null; 
-                    }
-
-                    hasMisses = HasMissingPoints(targetPts);
-                    double zMax = HighestElevation(targetPts);
-                    
-                    for (int u = 0; u < nsWIP.Points.CountU; u++)
-                    {
-                        for (int v = 0; v < nsWIP.Points.CountV; v++)
+                        if (startingSrfRefs == null || startingSrfRefs.Count == 0)
                         {
-                            ControlPoint cp = nsWIP.Points.GetControlPoint(u, v);
-                            nsWIP.Points.SetPoint(u, v, cp.Location.X, cp.Location.Y, zMax);
+                            var allGeom = new List<GeometryBase>();
+                            allGeom.AddRange(targetBreps);
+                            allGeom.AddRange(targetMeshes);
+                            nsWIP = CreateStartingSurface(allGeom, DrapeOptions.SpanSpacing, DrapeOptions.SpansBeyondEachSide);
                         }
+                        else
+                        {
+                            Surface srf = startingSrfRefs[i].Surface();
+                            if (srf == null && startingSrfRefs[i].Brep()?.Faces.Count == 1)
+                                srf = startingSrfRefs[i].Brep().Faces[0].UnderlyingSurface();
+                            
+                            nsWIP = srf?.ToNurbsSurface();
+                            if (nsWIP != null && !xformToW.IsIdentity) nsWIP.Transform(xformToW);
+                        }
+
+                        if (nsWIP == null) continue;
+
+                        Point3d[,] raycastPts;
+                        if (DrapeOptions.FitMethod == 3)
+                            raycastPts = GetControlPointLocations(nsWIP);
+                        else
+                            raycastPts = GetGrevillePoints(nsWIP);
+
+                        Point3d?[,] targetPts = ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
+                        if (targetPts == null) continue;
+
+                        bool hitAnything = false;
+                        foreach (var pt in targetPts) 
+                        { 
+                            if (pt.HasValue) { hitAnything = true; break; } 
+                        }
+
+                        if (!hitAnything) 
+                        {
+                            totalMisses++;
+                            progressCallback?.Invoke();
+                            continue;
+                        }
+
+                        bool hasMisses = HasMissingPoints(targetPts);
+                        if (hasMisses) anyPartialMisses = true;
+
+                        double zMax = HighestElevation(targetPts);
+                        
+                        for (int u = 0; u < nsWIP.Points.CountU; u++)
+                        {
+                            for (int v = 0; v < nsWIP.Points.CountV; v++)
+                            {
+                                ControlPoint cp = nsWIP.Points.GetControlPoint(u, v);
+                                nsWIP.Points.SetPoint(u, v, cp.Location.X, cp.Location.Y, zMax);
+                            }
+                        }
+
+                        if (hasMisses)
+                        {
+                            targetPts = ResolveMissingPoints(targetPts, raycastPts, nsWIP, DrapeOptions.TargetMisses);
+                        }
+
+                        NurbsSurface nsOut;
+                        if (DrapeOptions.FitMethod == 3)
+                        {
+                            nsOut = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP);
+                        }
+                        else if (DrapeOptions.FitMethod == 2)
+                        {
+                            var res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.SolverTimeout);
+                            nsOut = res.Surface;
+                            maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
+                            if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
+                        }
+                        else
+                        {
+                            nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0);
+                        }
+
+                        if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
+
+                        outSurfaces.Add(nsOut);
+                        progressCallback?.Invoke();
                     }
 
-                    if (hasMisses)
+                    if (totalMisses > 0)
                     {
-                        targetPts = ResolveMissingPoints(targetPts, raycastPts, nsWIP, DrapeOptions.TargetMisses);
+                        if (totalSurfaces == 1)
+                            RhinoApp.WriteLine("The starting surface completely misses the targets.");
+                        else
+                            RhinoApp.WriteLine($"{totalMisses} of {totalSurfaces} starting surfaces completely miss the targets.");
                     }
 
-                    NurbsSurface nsOut;
-                    
-                    // EXPLICIT ROUTING BASED ON UI
-                    if (DrapeOptions.FitMethod == 3)
-                        nsOut = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP);
-                    else if (DrapeOptions.FitMethod == 2)
-                        nsOut = ProjectionMath.FitDirectGreville(targetPts, nsWIP, DrapeOptions.Tolerance);
-                    else
-                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0);
-
-                    if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
-
-                    return nsOut;
+                    return outSurfaces;
                 }
                 catch (OperationCanceledException)
                 {
-                    return null;
+                    return outSurfaces;
                 }
             }
         }
@@ -293,7 +353,7 @@ namespace CADacombs.Commands.Modeling
                     {
                         if (!ptsOut[u, v].HasValue)
                         {
-                            ptsOut[u, v] = raycastPts[u, v]; // Naturally aligns to Greville or CP fallback
+                            ptsOut[u, v] = raycastPts[u, v]; 
                         }
                     }
                 }

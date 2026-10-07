@@ -12,6 +12,8 @@ using CADacombs.Core;
 
 namespace CADacombs.Commands.Modeling
 {
+    public enum DrapeCommandMode { Drape, Project }
+
     public class DrapeCommand : Command
     {
         public DrapeCommand() { Instance = this; }
@@ -20,48 +22,106 @@ namespace CADacombs.Commands.Modeling
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            // DYNAMIC DEFAULTING ON FIRST RUN
             if (!DrapeOptions.HasRunBefore)
             {
-                DrapeOptions.FitMethod = 0; // Default to Skirted Gravity Drop
+                DrapeOptions.FitMethod = 0; 
                 DrapeOptions.HasRunBefore = true;
             }
 
-            return RunSharedCommand(doc, mode);
+            return RunSharedCommand(doc, mode, DrapeCommandMode.Drape);
         }
 
-        public static Result RunSharedCommand(RhinoDoc doc, RunMode mode)
+        public static Result RunSharedCommand(RhinoDoc doc, RunMode mode, DrapeCommandMode cmdMode)
         {
             if (doc.ModelUnitSystem != UnitSystem.Inches && DrapeOptions.SpanSpacing == 1.0)
                 DrapeOptions.SpanSpacing = 25.0 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
 
             List<ObjRef> targetRefs = new List<ObjRef>();
-            ObjRef startingSrfRef = null;
+            List<ObjRef> startingSrfRefs = new List<ObjRef>();
 
-            var goTargets = new GetObject();
-            goTargets.SetCommandPrompt("Select target breps or meshes");
-            goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
-            goTargets.AcceptNumber(true, true);
-
-            if (mode == RunMode.Scripted)
+            if (cmdMode == DrapeCommandMode.Project)
             {
-                while (true)
+                startingSrfRefs = PickCustomSurfaces(null, "Select the surfaces to project", true);
+                if (startingSrfRefs == null || startingSrfRefs.Count == 0) return Result.Cancel;
+
+                var goTargets = new GetObject();
+                goTargets.SetCommandPrompt("Select surfaces, polysurfaces, SubDs and meshes to project onto");
+                goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
+                goTargets.EnablePreSelect(false, true); 
+                goTargets.DeselectAllBeforePostSelect = false;
+
+                if (mode == RunMode.Scripted)
                 {
-                    if (!SetupAndProcessOptions(goTargets, out GetResult resTargets)) continue;
-                    if (resTargets == GetResult.Cancel) return Result.Cancel;
-                    if (resTargets == GetResult.Object)
+                    while (true)
                     {
-                        targetRefs.AddRange(goTargets.Objects());
-                        break;
+                        if (!SetupAndProcessOptions(goTargets, out GetResult resTargets)) continue;
+                        if (resTargets == GetResult.Cancel) return Result.Cancel;
+                        if (resTargets == GetResult.Object)
+                        {
+                            foreach (var obj in goTargets.Objects())
+                            {
+                                bool isStartingSrf = false;
+                                foreach (var startSrf in startingSrfRefs)
+                                {
+                                    if (obj.ObjectId == startSrf.ObjectId) { isStartingSrf = true; break; }
+                                }
+                                if (!isStartingSrf) targetRefs.Add(obj);
+                            }
+                            break;
+                        }
+                    }
+                    if (targetRefs.Count == 0) return Result.Cancel;
+                    return DrapeLogic.ExecuteBake(doc, targetRefs.ToArray(), startingSrfRefs);
+                }
+                else
+                {
+                    goTargets.GetMultiple(1, 0);
+                    if (goTargets.CommandResult() != Result.Success) return goTargets.CommandResult();
+                    
+                    foreach (var obj in goTargets.Objects())
+                    {
+                        bool isStartingSrf = false;
+                        foreach (var startSrf in startingSrfRefs)
+                        {
+                            if (obj.ObjectId == startSrf.ObjectId) { isStartingSrf = true; break; }
+                        }
+                        if (!isStartingSrf) targetRefs.Add(obj);
+                    }
+
+                    if (targetRefs.Count == 0)
+                    {
+                        RhinoApp.WriteLine("No valid targets selected.");
+                        return Result.Cancel;
                     }
                 }
-                return DrapeLogic.ExecuteBake(doc, targetRefs.ToArray(), startingSrfRef);
             }
             else
             {
-                goTargets.GetMultiple(1, 0);
-                if (goTargets.CommandResult() != Result.Success) return goTargets.CommandResult();
-                targetRefs.AddRange(goTargets.Objects());
+                var goTargets = new GetObject();
+                goTargets.SetCommandPrompt("Select target surfaces, polysurfaces, SubDs and meshes");
+                goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
+                goTargets.AcceptNumber(true, true);
+
+                if (mode == RunMode.Scripted)
+                {
+                    while (true)
+                    {
+                        if (!SetupAndProcessOptions(goTargets, out GetResult resTargets)) continue;
+                        if (resTargets == GetResult.Cancel) return Result.Cancel;
+                        if (resTargets == GetResult.Object)
+                        {
+                            targetRefs.AddRange(goTargets.Objects());
+                            break;
+                        }
+                    }
+                    return DrapeLogic.ExecuteBake(doc, targetRefs.ToArray(), startingSrfRefs);
+                }
+                else
+                {
+                    goTargets.GetMultiple(1, 0);
+                    if (goTargets.CommandResult() != Result.Success) return goTargets.CommandResult();
+                    targetRefs.AddRange(goTargets.Objects());
+                }
             }
 
             doc.Objects.UnselectAll();
@@ -74,18 +134,26 @@ namespace CADacombs.Commands.Modeling
             {
                 RhinoApp.SetCommandPrompt("Continue in dialog");
                 
-                var dialog = new DrapeDialog(targetRefs.ToArray(), startingSrfRef, conduit);
+                var dialog = new DrapeDialog(targetRefs.ToArray(), startingSrfRefs, conduit);
                 var parent = RhinoEtoApp.MainWindowForDocument(doc);
                 dialog.ShowSemiModal(doc, parent);
 
                 if (dialog.Action == DrapeDialogAction.Ok)
                 {
-                    if (dialog.ResultSurface != null)
+                    if (dialog.ResultSurfaces != null && dialog.ResultSurfaces.Count > 0)
                     {
-                        doc.Objects.AddSurface(dialog.ResultSurface);
+                        foreach (var ns in dialog.ResultSurfaces)
+                        {
+                            doc.Objects.AddSurface(ns);
+                        }
                         
-                        if (startingSrfRef != null && DrapeOptions.DeleteStartingSrf && DrapeOptions.UserProvidesStartingSrf)
-                            doc.Objects.Delete(startingSrfRef.ObjectId, true);
+                        if (startingSrfRefs != null && DrapeOptions.DeleteStartingSrf && DrapeOptions.UserProvidesStartingSrf)
+                        {
+                            foreach (var srf in startingSrfRefs)
+                            {
+                                doc.Objects.Delete(srf.ObjectId, true);
+                            }
+                        }
                             
                         commandResult = Result.Success;
                     }
@@ -95,14 +163,27 @@ namespace CADacombs.Commands.Modeling
                 {
                     var oldTargets = new List<ObjRef>(targetRefs);
                     var goEdit = new GetObject();
-                    goEdit.SetCommandPrompt("Reselect target breps or meshes");
-                    goEdit.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+                    
+                    goEdit.SetCommandPrompt(cmdMode == DrapeCommandMode.Project ? "Reselect surfaces, polysurfaces, SubDs and meshes to project onto" : "Reselect target surfaces, polysurfaces, SubDs and meshes");
+                    goEdit.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
                     goEdit.GetMultiple(1, 0);
                     
                     if (goEdit.CommandResult() == Result.Success)
                     {
                         targetRefs.Clear();
-                        targetRefs.AddRange(goEdit.Objects());
+                        foreach (var obj in goEdit.Objects())
+                        {
+                            bool isStartingSrf = false;
+                            if (startingSrfRefs != null)
+                            {
+                                foreach (var startSrf in startingSrfRefs)
+                                {
+                                    if (obj.ObjectId == startSrf.ObjectId) { isStartingSrf = true; break; }
+                                }
+                            }
+                            if (!isStartingSrf) targetRefs.Add(obj);
+                        }
+                        if (targetRefs.Count == 0) targetRefs = oldTargets;
                     }
                     else
                     {
@@ -114,7 +195,7 @@ namespace CADacombs.Commands.Modeling
                 {
                     var oldTargets = new List<ObjRef>(targetRefs);
                     var goAddRem = new GetObject();
-                    goAddRem.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+                    goAddRem.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
 
                     if (targetRefs.Count > 0)
                     {
@@ -146,7 +227,19 @@ namespace CADacombs.Commands.Modeling
                         else
                         {
                             targetRefs.Clear();
-                            targetRefs.AddRange(currentList);
+                            foreach (var obj in currentList)
+                            {
+                                bool isStartingSrf = false;
+                                if (startingSrfRefs != null)
+                                {
+                                    foreach (var startSrf in startingSrfRefs)
+                                    {
+                                        if (obj.ObjectId == startSrf.ObjectId) { isStartingSrf = true; break; }
+                                    }
+                                }
+                                if (!isStartingSrf) targetRefs.Add(obj);
+                            }
+                            if (targetRefs.Count == 0) targetRefs = oldTargets;
                         }
                     }
                     else
@@ -158,10 +251,10 @@ namespace CADacombs.Commands.Modeling
                 }
                 else if (dialog.Action == DrapeDialogAction.PickCustomSurface)
                 {
-                    var picked = PickCustomSurface(targetRefs);
-                    if (picked != null)
+                    var picked = PickCustomSurfaces(targetRefs, "Select custom starting surface", false);
+                    if (picked != null && picked.Count > 0)
                     {
-                        startingSrfRef = picked;
+                        startingSrfRefs = picked;
                         DrapeOptions.UserProvidesStartingSrf = true; 
                     }
                 }
@@ -178,50 +271,64 @@ namespace CADacombs.Commands.Modeling
             return commandResult;
         }
 
-        private static ObjRef PickCustomSurface(List<ObjRef> currentTargets)
+        public static List<ObjRef> PickCustomSurfaces(List<ObjRef> currentTargets, string prompt = "Select custom starting surface(s)", bool allowPreSelect = false)
         {
             while (true)
             {
                 var goSrf = new GetObject();
-                goSrf.SetCommandPrompt("Select custom starting surface");
+                goSrf.SetCommandPrompt(prompt);
                 goSrf.GeometryFilter = ObjectType.Surface;
-                goSrf.DisablePreSelect();
+                if (!allowPreSelect) goSrf.DisablePreSelect();
                 goSrf.SubObjectSelect = true; 
 
-                var resSrf = goSrf.Get();
+                var resSrf = goSrf.GetMultiple(1, 0);
                 if (resSrf == GetResult.Cancel) return null;
 
                 if (resSrf == GetResult.Object)
                 {
-                    ObjRef srfRef = goSrf.Object(0);
-                    RhinoDoc.ActiveDoc.Objects.UnselectAll();
+                    var srfRefs = goSrf.Objects().ToList();
+                    RhinoDoc.ActiveDoc.Objects.UnselectAll(); 
 
                     bool isTarget = false;
                     if (currentTargets != null)
                     {
-                        foreach (var t in currentTargets)
+                        foreach (var srfRef in srfRefs)
                         {
-                            if (srfRef.ObjectId == t.ObjectId) { isTarget = true; break; }
+                            foreach (var t in currentTargets)
+                            {
+                                if (srfRef.ObjectId == t.ObjectId) { isTarget = true; break; }
+                            }
+                            if (isTarget) break;
                         }
                     }
 
                     if (isTarget)
                     {
-                        RhinoApp.WriteLine("Starting surface cannot be one of the target objects.");
+                        RhinoApp.WriteLine("Starting surfaces cannot be one of the target objects.");
                         continue;
                     }
 
-                    Surface srf = srfRef.Surface();
-                    if (srf == null && srfRef.Brep()?.Faces.Count == 1)
-                        srf = srfRef.Brep().Faces[0].UnderlyingSurface();
-
-                    if (srf == null)
+                    bool allValid = true;
+                    foreach(var srfRef in srfRefs)
                     {
-                        RhinoApp.WriteLine("Valid surface not found.");
+                        Surface srf = srfRef.Surface();
+                        if (srf == null && srfRef.Brep()?.Faces.Count == 1)
+                            srf = srfRef.Brep().Faces[0].UnderlyingSurface();
+
+                        if (srf == null)
+                        {
+                            allValid = false;
+                            break;
+                        }
+                    }
+
+                    if (!allValid)
+                    {
+                        RhinoApp.WriteLine("Valid surface not found in selection.");
                         continue;
                     }
                     
-                    return srfRef;
+                    return srfRefs;
                 }
             }
         }
