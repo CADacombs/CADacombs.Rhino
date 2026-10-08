@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Eto.Drawing;
 using Eto.Forms;
+using Rhino;
 using Rhino.DocObjects;
 using Rhino.Geometry;
 using CADacombs.Core;
@@ -10,8 +11,6 @@ using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Modeling
 {
-    public enum DrapeDialogAction { None, Ok, Cancel, AddRemoveTargets, ReselectTargets, PickCustomSurface }
-
     public class DrapeDialog : CADacombsDialogBase
     {
         public DrapeDialogAction Action { get; set; } = DrapeDialogAction.None;
@@ -21,12 +20,12 @@ namespace CADacombs.Commands.Modeling
         private List<ObjRef> _startingSrfRefs;
         private DrapeConduit _conduit;
 
-        // Cache includes List<string> for messages and a double for MaxDeviation
         private Dictionary<string, (List<NurbsSurface>, List<Brep>, bool, List<string>, double)> _previewCache = new Dictionary<string, (List<NurbsSurface>, List<Brep>, bool, List<string>, double)>();
 
         private RadioButton _rbSelect;
         private RadioButton _rbCreate;
         private Button _btnReselSrf;
+        private Button _btnAddRemSrf;
 
         private TextBox _txtSpanSpacing;
         private NumericStepper _stepSpansBeyond;
@@ -36,7 +35,10 @@ namespace CADacombs.Commands.Modeling
         private TextBox _txtTolerance;
         private NumericStepper _stepTimeout;
         private DropDown _dropTargetMisses;
+        private DropDown _dropOutputLayer;
         private CheckBox _chkFlipCPlane;
+        private CheckBox _chkDeleteInput;
+        private CheckBox _chkFlatten;
         
         private CheckBox _chkShowSurface;
         private CheckBox _chkShowWireframe;
@@ -50,6 +52,8 @@ namespace CADacombs.Commands.Modeling
         private Button _btnOk;
         private Button _btnCancel;
 
+        private bool _isComputing = false;
+        private bool _cancelRequested = false;
         private bool _previewPending = false;
         private bool _isUpdatingTextProgrammatically = false;
         private UITimer _typingTimer;
@@ -60,9 +64,9 @@ namespace CADacombs.Commands.Modeling
             _startingSrfRefs = startingSrfRefs;
             _conduit = conduit;
 
-            Title = "CADacombs Drape";
+            Title = "CADacombs Drape / ProjectSrf";
             Resizable = false;
-            AutoSize = true; // Essential for dynamic layout expansion
+            AutoSize = true; 
             Padding = new Padding(12);
 
             _typingTimer = new UITimer { Interval = 1.0 };
@@ -108,6 +112,12 @@ namespace CADacombs.Commands.Modeling
 
             _btnReselSrf = new Button { Text = "Reselect" };
             _btnReselSrf.Click += (s, e) => { Action = DrapeDialogAction.PickCustomSurface; Close(); };
+            
+            _btnAddRemSrf = new Button { Text = "Add / Remove" };
+            _btnAddRemSrf.Click += (s, e) => { Action = DrapeDialogAction.AddRemoveStartingSurfaces; Close(); };
+
+            _chkFlatten = new CheckBox { Text = "Flatten starting surface", Checked = DrapeOptions.FlattenStartingSrf };
+            _chkFlatten.CheckedChanged += (s, e) => { DrapeOptions.FlattenStartingSrf = _chkFlatten.Checked ?? true; OnOptionChanged(s, e); };
 
             _txtSpanSpacing = new TextBox { Text = DrapeOptions.SpanSpacing.ToString("G"), Width = 60 };
             _txtSpanSpacing.TextChanged += OnToleranceTextChanged;
@@ -138,9 +148,6 @@ namespace CADacombs.Commands.Modeling
             _stepTimeout = new NumericStepper { Value = DrapeOptions.SolverTimeout, MinValue = 0.1, MaxValue = 60.0, DecimalPlaces = 1, Width = 60, Increment = 0.5 };
             _stepTimeout.ValueChanged += OnOptionChanged;
 
-            _chkFlipCPlane = new CheckBox { Text = "Flip drape direction", Checked = DrapeOptions.FlipCPlane };
-            _chkFlipCPlane.CheckedChanged += OnOptionChanged;
-
             _dropTargetMisses = new DropDown();
             _dropTargetMisses.Items.Add("Fix to starting surface");
             _dropTargetMisses.Items.Add("Use lowest neighbor hits");
@@ -148,9 +155,32 @@ namespace CADacombs.Commands.Modeling
             _dropTargetMisses.SelectedIndex = DrapeOptions.TargetMisses;
             _dropTargetMisses.SelectedIndexChanged += OnOptionChanged;
 
-            _chkShowSurface = new CheckBox { Text = "Shaded surface", Checked = DrapeOptions.ShowSurface };
+            _dropOutputLayer = new DropDown();
+            _dropOutputLayer.Items.Add("Input");
+            _dropOutputLayer.Items.Add("Current");
+            _dropOutputLayer.Items.Add("TargetObject");
+            _dropOutputLayer.SelectedIndex = DrapeOptions.OutputLayer;
+            _dropOutputLayer.SelectedIndexChanged += (s, e) => 
+            {
+                DrapeOptions.OutputLayer = _dropOutputLayer.SelectedIndex;
+                UpdateConduitColors();
+                RhinoDoc.ActiveDoc.Views.Redraw();
+            };
+
+            _chkFlipCPlane = new CheckBox { Text = "Flip drape direction", Checked = DrapeOptions.FlipCPlane };
+            _chkFlipCPlane.CheckedChanged += OnOptionChanged;
+
+            _chkDeleteInput = new CheckBox { Text = "Delete input", Checked = DrapeOptions.DeleteStartingSrf };
+            _chkDeleteInput.CheckedChanged += (s, e) => 
+            { 
+                DrapeOptions.DeleteStartingSrf = _chkDeleteInput.Checked ?? false; 
+                UpdateConduitColors();
+                RhinoDoc.ActiveDoc.Views.Redraw();
+            };
+
+            _chkShowSurface = new CheckBox { Text = "Shaded", Checked = DrapeOptions.ShowSurface };
             _chkShowWireframe = new CheckBox { Text = "Wireframe", Checked = DrapeOptions.ShowWireframe };
-            _chkShowPolygon = new CheckBox { Text = "Control polygon", Checked = DrapeOptions.ShowPolygon };
+            _chkShowPolygon = new CheckBox { Text = "CPolygon", Checked = DrapeOptions.ShowPolygon };
 
             _conduit.ShowSurface = DrapeOptions.ShowSurface;
             _conduit.ShowWireframe = DrapeOptions.ShowWireframe;
@@ -161,7 +191,7 @@ namespace CADacombs.Commands.Modeling
                 _conduit.ShowSurface = _chkShowSurface.Checked ?? true;
                 _conduit.ShowWireframe = _chkShowWireframe.Checked ?? true;
                 _conduit.ShowPolygon = _chkShowPolygon.Checked ?? false;
-                Rhino.RhinoDoc.ActiveDoc.Views.Redraw();
+                RhinoDoc.ActiveDoc.Views.Redraw();
             };
 
             _chkShowSurface.CheckedChanged += displayEvent;
@@ -173,17 +203,30 @@ namespace CADacombs.Commands.Modeling
             _progressBar = new ProgressBar { MinValue = 0, MaxValue = 1, Value = 0, Visible = false, Height = 10 };
 
             _btnPreview = new Button { Text = "Preview", Width = 75, Enabled = false };
-            _btnPreview.Click += (s, e) => UpdatePreview(false);
+            _btnPreview.Click += (s, e) => 
+            { 
+                if (_isComputing)
+                {
+                    _cancelRequested = true;
+                    _btnPreview.Text = "Stopping...";
+                    _btnPreview.Enabled = false;
+                }
+                else
+                {
+                    UpdatePreview(false);
+                }
+            };
 
-            _btnOk = new Button { Text = "OK" };
+            _btnOk = new Button { Text = "OK", Width = 75 };
             _btnOk.Click += (s, e) => 
             { 
+                if (_isComputing) return;
                 if (_previewPending) UpdatePreview(false);
                 Action = DrapeDialogAction.Ok; 
                 Close(); 
             };
             
-            _btnCancel = new Button { Text = "Cancel" };
+            _btnCancel = new Button { Text = "Cancel", Width = 75 };
             _btnCancel.Click += (s, e) => { Action = DrapeDialogAction.Cancel; Close(); };
 
             DefaultButton = _btnOk;
@@ -194,28 +237,31 @@ namespace CADacombs.Commands.Modeling
         {
             var layout = new DynamicLayout { DefaultSpacing = new Size(5, 10) };
             
-            layout.AddRow(new Label { Text = "Targets", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
-            
             var btnAddRemTargets = new Button { Text = "Add / Remove" };
             btnAddRemTargets.Click += (s, e) => { Action = DrapeDialogAction.AddRemoveTargets; Close(); };
-            
             var btnReselTargets = new Button { Text = "Reselect" };
             btnReselTargets.Click += (s, e) => { ClearPreview(); Action = DrapeDialogAction.ReselectTargets; Close(); };
 
-            var targetStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { btnAddRemTargets, btnReselTargets, null } };
-            layout.AddRow(targetStack);
+            layout.AddRow(new StackLayout { 
+                Orientation = Orientation.Horizontal, 
+                Spacing = 10, 
+                VerticalContentAlignment = VerticalAlignment.Center, 
+                Items = { new Label { Text = "Targets", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, btnAddRemTargets, btnReselTargets } 
+            });
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
             layout.AddRow(new Label { Text = "Starting surface", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var srfGrid = new DynamicLayout { Spacing = new Size(10, 5) };
-            var selectStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _btnReselSrf, null } };
+            
+            var selectStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _btnAddRemSrf, _btnReselSrf } };
+            var selectArea = new StackLayout { Orientation = Orientation.Vertical, Spacing = 5, Items = { selectStack, _chkFlatten } };
             
             var createGrid = new DynamicLayout { Spacing = new Size(10, 5) };
             createGrid.AddRow(new Label { Text = "Span spacing:", VerticalAlignment = VerticalAlignment.Center }, _txtSpanSpacing, null);
             createGrid.AddRow(new Label { Text = "Spans beyond target:", VerticalAlignment = VerticalAlignment.Center }, _stepSpansBeyond, null);
 
-            srfGrid.AddRow(_rbSelect, selectStack, null);
+            srfGrid.AddRow(_rbSelect, selectArea, null);
             srfGrid.AddRow(_rbCreate, createGrid, null);
             
             layout.AddRow(srfGrid);
@@ -225,27 +271,32 @@ namespace CADacombs.Commands.Modeling
             
             var genGrid = new DynamicLayout { Spacing = new Size(10, 5) };
             
-            // Dropdown indented on a new row
-            genGrid.AddRow(new Label { Text = "Fit method:", VerticalAlignment = VerticalAlignment.Center });
-            var fitStack = new StackLayout { Padding = new Padding(15, 0, 0, 0), Items = { _dropFitMethod } };
-            genGrid.AddRow(fitStack);
+            var tableGen = new TableLayout { Spacing = new Size(10, 5) };
+            tableGen.Rows.Add(new TableRow(new Label { Text = "Fit method:", VerticalAlignment = VerticalAlignment.Center }, _dropFitMethod, null));
             
-            var warnStack = new StackLayout { Padding = new Padding(15, 0, 0, 0), Items = { _lblSrfWarning } };
-            genGrid.AddRow(warnStack);
+            genGrid.AddRow(tableGen);
+            genGrid.AddRow(new StackLayout { Padding = new Padding(15, 0, 0, 0), Items = { _lblSrfWarning } });
 
-            // Wrapped in StackLayouts so they don't stretch fully right
-            var tolStack = new StackLayout { Orientation = Orientation.Horizontal, Items = { _txtTolerance } };
-            genGrid.AddRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, tolStack, null);
+            var tableGen2 = new TableLayout { Spacing = new Size(10, 5) };
+            var btnDefaultTol = new Button { Text = "Default" };
+            btnDefaultTol.Click += (s, e) => 
+            {
+                _isUpdatingTextProgrammatically = true;
+                _txtTolerance.Text = (10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance).ToString("G");
+                DrapeOptions.Tolerance = 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+                _txtTolerance.BackgroundColor = Colors.White;
+                _isUpdatingTextProgrammatically = false;
+                UpdatePreview(true);
+            };
+
+            var tolStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _txtTolerance, btnDefaultTol } };
+            tableGen2.Rows.Add(new TableRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, tolStack, null));
+            tableGen2.Rows.Add(new TableRow(new Label { Text = "Action for misses:", VerticalAlignment = VerticalAlignment.Center }, _dropTargetMisses, null));
+            tableGen2.Rows.Add(new TableRow(new Label { Text = "Output layer:", VerticalAlignment = VerticalAlignment.Center }, _dropOutputLayer, null));
             
-            var missesStack = new StackLayout { Orientation = Orientation.Horizontal, Items = { _dropTargetMisses } };
-            genGrid.AddRow(new Label { Text = "Action for misses:", VerticalAlignment = VerticalAlignment.Center }, missesStack, null);
+            genGrid.AddRow(tableGen2);
+            genGrid.AddRow(new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, Items = { _chkFlipCPlane, _chkDeleteInput } });
             
-            layout.AddRow(genGrid);
-
-            // Flip CPlane moved above Timeout
-            layout.AddRow(new StackLayout { Padding = new Padding(0, 5, 0, 5), Items = { _chkFlipCPlane } });
-
-            // Timeout moved to the bottom of General section
             var timeoutPreviewStack = new StackLayout
             {
                 Orientation = Orientation.Horizontal,
@@ -253,12 +304,18 @@ namespace CADacombs.Commands.Modeling
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Items = { new Label { Text = "Solver timeout (s):", VerticalAlignment = VerticalAlignment.Center }, _stepTimeout, new Label { Width = 10 }, _btnPreview }
             };
-            layout.AddRow(timeoutPreviewStack);
-            
+            genGrid.AddRow(timeoutPreviewStack);
+
+            layout.AddRow(genGrid);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            layout.AddRow(new Label { Text = "Display", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
-            layout.AddRow(new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, Items = { _chkShowSurface, _chkShowWireframe, _chkShowPolygon } });
+            var displayHeaderStack = new StackLayout { 
+                Orientation = Orientation.Horizontal, 
+                Spacing = 10, 
+                VerticalContentAlignment = VerticalAlignment.Center, 
+                Items = { new Label { Text = "Display", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, _chkShowSurface, _chkShowWireframe, _chkShowPolygon } 
+            };
+            layout.AddRow(displayHeaderStack);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             
             layout.AddRow(_progressBar);
@@ -273,8 +330,11 @@ namespace CADacombs.Commands.Modeling
             bool isSelect = _rbSelect.Checked;
             
             _btnReselSrf.Enabled = isSelect;
+            _btnAddRemSrf.Enabled = isSelect;
+            _chkFlatten.Enabled = isSelect;
             _txtSpanSpacing.Enabled = !isSelect;
             _stepSpansBeyond.Enabled = !isSelect;
+            _chkDeleteInput.Enabled = isSelect;
         }
 
         private void OnOptionChanged(object sender, EventArgs e)
@@ -292,6 +352,7 @@ namespace CADacombs.Commands.Modeling
             
             _btnPreview.Enabled = false;
             _btnPreview.TextColor = SystemColors.ControlText;
+            _btnPreview.Text = "Preview";
             _btnPreview.Font = new Eto.Drawing.Font(SystemFont.Default, _btnPreview.Font.Size);
 
             _typingTimer.Stop();
@@ -308,12 +369,12 @@ namespace CADacombs.Commands.Modeling
         {
             _previewPending = true;
             _btnPreview.Enabled = true;
+            _btnPreview.Text = "Preview";
             _btnPreview.TextColor = Colors.Red;
             _btnPreview.Font = new Eto.Drawing.Font(SystemFont.Bold, _btnPreview.Font.Size);
             _lblProcessedCount.Text = message;
             _lblMaxDev.Text = "";
             
-            // Force redraw height
             if (ParentWindow != null) this.Size = new Size(this.Width, -1);
         }
 
@@ -321,6 +382,7 @@ namespace CADacombs.Commands.Modeling
         {
             _previewPending = false;
             _btnPreview.Enabled = false;
+            _btnPreview.Text = "Preview";
             _btnPreview.TextColor = SystemColors.ControlText;
             _btnPreview.Font = new Eto.Drawing.Font(SystemFont.Default, _btnPreview.Font.Size);
 
@@ -328,7 +390,7 @@ namespace CADacombs.Commands.Modeling
 
             if (DrapeOptions.FitMethod == 2)
             {
-                int prec = Rhino.RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+                int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
                 _lblMaxDev.Text = $"Max dev: {FormatUtils.FormatDistance(maxDev, prec)}";
             }
             else
@@ -364,7 +426,48 @@ namespace CADacombs.Commands.Modeling
             ResultSurfaces = null;
             _conduit.PreviewSurfaces = null;
             _conduit.PreviewBreps = null;
-            Rhino.RhinoDoc.ActiveDoc.Views.Redraw();
+            _conduit.PreviewColors.Clear();
+            RhinoDoc.ActiveDoc.Views.Redraw();
+        }
+
+        private void UpdateConduitColors()
+        {
+            if (ResultSurfaces == null) return;
+
+            bool isSelect = _rbSelect.Checked;
+            var doc = RhinoDoc.ActiveDoc;
+            var colors = new List<System.Drawing.Color>();
+
+            for (int i = 0; i < ResultSurfaces.Count; i++)
+            {
+                if (ResultSurfaces[i] == null)
+                {
+                    colors.Add(System.Drawing.Color.Black);
+                    continue;
+                }
+
+                System.Drawing.Color c = doc.Layers.CurrentLayer.Color;
+                
+                if (DrapeOptions.OutputLayer == 0 && isSelect && _startingSrfRefs != null && i < _startingSrfRefs.Count && _startingSrfRefs[i].Object() != null)
+                {
+                    var attr = _startingSrfRefs[i].Object().Attributes;
+                    if (attr.ColorSource == ObjectColorSource.ColorFromObject)
+                        c = attr.ObjectColor;
+                    else
+                        c = doc.Layers[attr.LayerIndex].Color;
+                }
+                else if (DrapeOptions.OutputLayer == 2 && _targetRefs != null && _targetRefs.Length > 0 && _targetRefs[0].Object() != null)
+                {
+                    var attr = _targetRefs[0].Object().Attributes;
+                    if (attr.ColorSource == ObjectColorSource.ColorFromObject)
+                        c = attr.ObjectColor;
+                    else
+                        c = doc.Layers[attr.LayerIndex].Color;
+                }
+                
+                colors.Add(c);
+            }
+            _conduit.PreviewColors = colors;
         }
 
         private void UpdatePreview(bool autoRun = true)
@@ -379,10 +482,12 @@ namespace CADacombs.Commands.Modeling
                 return;
             }
 
+            double minTol = 1e-6 * RhinoMath.UnitScale(UnitSystem.Millimeters, RhinoDoc.ActiveDoc.ModelUnitSystem);
+            
             _isUpdatingTextProgrammatically = true;
             bool allValid = true;
 
-            if (double.TryParse(_txtSpanSpacing.Text, out double spacing) && spacing > Rhino.RhinoMath.ZeroTolerance)
+            if (double.TryParse(_txtSpanSpacing.Text, out double spacing) && spacing > RhinoMath.ZeroTolerance)
             {
                 DrapeOptions.SpanSpacing = spacing;
                 _txtSpanSpacing.BackgroundColor = Colors.White;
@@ -393,8 +498,13 @@ namespace CADacombs.Commands.Modeling
                 allValid = false;
             }
 
-            if (double.TryParse(_txtTolerance.Text, out double tol) && tol >= Rhino.RhinoMath.ZeroTolerance)
+            if (double.TryParse(_txtTolerance.Text, out double tol) && tol > RhinoMath.ZeroTolerance)
             {
+                if (tol < minTol)
+                {
+                    tol = minTol;
+                    _txtTolerance.Text = tol.ToString("G");
+                }
                 DrapeOptions.Tolerance = tol;
                 _txtTolerance.BackgroundColor = Colors.White;
             }
@@ -435,7 +545,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
             
-            // Dynamic resizing logic for the warning toggle
             bool oldVisible = _lblSrfWarning.Visible;
             _lblSrfWarning.Visible = showWarning;
             if (oldVisible != showWarning && ParentWindow != null)
@@ -444,7 +553,7 @@ namespace CADacombs.Commands.Modeling
             }
 
             string cacheKey = isSelect 
-                ? $"Select_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}_{DrapeOptions.FitMethod}_{DrapeOptions.Tolerance}_{DrapeOptions.SolverTimeout}" 
+                ? $"Select_{DrapeOptions.FlattenStartingSrf}_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}_{DrapeOptions.FitMethod}_{DrapeOptions.Tolerance}_{DrapeOptions.SolverTimeout}" 
                 : $"Create_{DrapeOptions.SpanSpacing}_{DrapeOptions.SpansBeyondEachSide}_{DrapeOptions.TargetMisses}_{DrapeOptions.FlipCPlane}_{DrapeOptions.FitMethod}_{DrapeOptions.Tolerance}_{DrapeOptions.SolverTimeout}";
 
             int expectedCount = isSelect ? _startingSrfRefs.Count : 1;
@@ -460,11 +569,20 @@ namespace CADacombs.Commands.Modeling
 
                 foreach (var msg in cachedData.Item4)
                 {
-                    if (!string.IsNullOrEmpty(msg)) Rhino.RhinoApp.WriteLine(msg);
+                    if (!string.IsNullOrEmpty(msg)) RhinoApp.WriteLine(msg);
                 }
+                UpdateConduitColors();
+                RhinoDoc.ActiveDoc.Views.Redraw();
             }
             else
             {
+                _isComputing = true;
+                _cancelRequested = false;
+                _btnPreview.Text = "Stop";
+                _btnPreview.TextColor = Colors.Red;
+                _btnPreview.Font = new Eto.Drawing.Font(SystemFont.Bold, _btnPreview.Font.Size);
+                _btnPreview.Enabled = true;
+
                 _progressBar.Visible = true;
                 _progressBar.Value = 0;
                 _progressBar.MaxValue = expectedCount;
@@ -472,31 +590,54 @@ namespace CADacombs.Commands.Modeling
 
                 List<ObjRef> activeStartingSrfs = isSelect ? _startingSrfRefs : null;
 
-                Action progressCallback = () => 
+                Action progressCallback = delegate 
                 { 
                     _progressBar.Value++; 
-                    Rhino.RhinoApp.Wait(); 
+                    RhinoApp.Wait(); 
                 };
 
-                ResultSurfaces = DrapeLogic.ComputeDrapeSurfaces(Rhino.RhinoDoc.ActiveDoc, _targetRefs, activeStartingSrfs, out bool hasMisses, out List<string> messages, out double maxDev, progressCallback);
-                
-                _conduit.PreviewSurfaces = ResultSurfaces;
-                _conduit.PreviewBreps = ResultSurfaces?.Select(s => s?.ToBrep()).ToList();
-                _dropTargetMisses.Enabled = hasMisses;
-
-                ClearPreviewPending(expectedCount, maxDev);
-
-                foreach (var msg in messages)
+                Func<bool> checkCancel = delegate
                 {
-                    if (!string.IsNullOrEmpty(msg)) Rhino.RhinoApp.WriteLine(msg);
+                    RhinoApp.Wait();
+                    return _cancelRequested;
+                };
+
+                try
+                {
+                    bool hasMisses;
+                    List<string> messages;
+                    double maxDev;
+
+                    ResultSurfaces = DrapeLogic.ComputeDrapeSurfaces(RhinoDoc.ActiveDoc, _targetRefs, activeStartingSrfs, out hasMisses, out messages, out maxDev, progressCallback, checkCancel);
+                    
+                    _conduit.PreviewSurfaces = ResultSurfaces;
+                    _conduit.PreviewBreps = ResultSurfaces != null ? ResultSurfaces.Select(s => s?.ToBrep()).ToList() : new List<Brep>();
+                    _dropTargetMisses.Enabled = hasMisses;
+
+                    ClearPreviewPending(expectedCount, maxDev);
+
+                    foreach (var msg in messages)
+                    {
+                        if (!string.IsNullOrEmpty(msg)) RhinoApp.WriteLine(msg);
+                    }
+
+                    _previewCache[cacheKey] = (ResultSurfaces, _conduit.PreviewBreps, hasMisses, messages, maxDev);
+                    
+                    UpdateConduitColors();
+                    RhinoDoc.ActiveDoc.Views.Redraw();
                 }
-
-                _previewCache[cacheKey] = (ResultSurfaces, _conduit.PreviewBreps, hasMisses, messages, maxDev);
-                _progressBar.Visible = false;
-                if (ParentWindow != null) this.Size = new Size(this.Width, -1);
+                catch (OperationCanceledException)
+                {
+                    SetPreviewRequired("Calculation cancelled. Click Preview to compute.");
+                    ClearPreview();
+                }
+                finally
+                {
+                    _isComputing = false;
+                    _progressBar.Visible = false;
+                    if (ParentWindow != null) this.Size = new Size(this.Width, -1);
+                }
             }
-
-            Rhino.RhinoDoc.ActiveDoc.Views.Redraw();
         }
 
         protected override void OnClosed(EventArgs e)

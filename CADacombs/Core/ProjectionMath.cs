@@ -17,7 +17,7 @@ namespace CADacombs.Core
 
     public static class ProjectionMath
     {
-        public static ProjectionResult FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, double timeoutSecs)
+        public static ProjectionResult FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null)
         {
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = nsIn.Points.CountU;
@@ -48,9 +48,11 @@ namespace CADacombs.Core
                 }
             }
 
-            // Iterative relaxation loop bounded by timeout
+            // Iterative relaxation loop bounded by timeout and cancel token
             while (sw.Elapsed.TotalSeconds < timeoutSecs)
             {
+                if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
+
                 iterations++;
                 bool bTransPts = false;
                 maxDev = 0.0;
@@ -90,7 +92,6 @@ namespace CADacombs.Core
             string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
             string tolStr = FormatUtils.FormatDistance(fTolerance, prec);
 
-            // Construct the single-line report string
             string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max deviation: {maxDevStr}.";
             if (!converged && maxDev > fTolerance)
             {

@@ -21,17 +21,21 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 * **Corner Averaging:** Intelligently averages intersecting G1/G2 adjustments at corners so boundaries flow together seamlessly.
 * **NURBS Precision:** The output surface may contain more knot vectors than native `_EdgeSrf` to ensure absolute mathematical compliance with the requested continuity.
 
-#### 2. ccDrape
-`ccDrape` is an advanced alternative to Rhino's native `_Drape` command, utilizing Greville point locations to fit an open, degree-3 NURBS surface precisely over target Breps and Meshes.
+#### 2. ccDrape & ccProjectSrf
+`ccDrape` and `ccProjectSrf` are advanced alternatives to Rhino's native `_Drape` and `_Project` commands, utilizing Greville point locations to fit open, degree-3 NURBS surfaces precisely over target Breps, Meshes, and SubDs.
 
 **Key Features:**
-* **Interactive Eto Dialog:** Features a modern, stateless UI with real-time cached preview updates, robust Add/Remove target toggling, and granular numeric control over tolerances and spans.
+* **Interactive Eto Dialog & CLI:** Features a modern, stateless UI with real-time cached preview updates, robust Add/Remove target toggling, and granular numeric control. Both commands also feature full Command-Line Interface (CLI) support for rapid, macro-friendly execution.
 * **Selectable Fit Methods:** Choose between distinct algorithmic solvers depending on the target geometry:
-  * **Gravity drape (Classic skirted borders):** Employs an iterative High-to-Low elevation sorting algorithm. Quarantines border control points to ensure absolute zero clipping, ideal for vertical walls and architectural blocks.
-  * **Gravity drape (Extended full border hugging):** Modifies the gravity drape to allow border control points to participate in neighbor translations, allowing the edges to hug meshes tighter.
-  * **Direct Greville relaxation:** A direct point-relaxation solver that produces smooth, low-tension surfaces. Automatically defaulted to when draping over a single, continuous surface.
-* **Starting Surface Flexibility:** Automatically generates a starting surface based on the bounding box and span spacing of the target objects, or allows you to select your own custom starting surface.
-* **Advanced Miss Handling:** Handles "missed" target projections with customizable resolution strategies: lock to the starting surface, use the lowest hit neighbor, or linearly extrapolate from the nearest hits.
+  * **Drape with skirted borders:** Employs an iterative High-to-Low elevation sorting algorithm. Quarantines border control points to ensure absolute zero clipping, ideal for vertical walls and architectural blocks.
+  * **Drape with hugging borders:** Modifies the gravity drape to allow border control points to participate in neighbor translations, allowing the edges to hug meshes tighter.
+  * **Project Greville points:** A direct point-relaxation solver that produces smooth, low-tension surfaces. Automatically defaulted to when projecting or draping over a single, continuous surface.
+  * **Project control points:** A fast, direct 1:1 control point projection.
+* **Starting Surface Flexibility:** Automatically generates a starting surface based on the bounding box and span spacing of the target objects (`ccDrape`), or allows you to select your own custom starting surfaces.
+* **Advanced Miss Handling:** Handles "missed" target projections with customizable resolution strategies: fix to the starting surface, use the lowest hit neighbor, or linearly extrapolate from the nearest hits.
+* **Non-Destructive Replacement:** The `Delete input` option uses native UUID replacement, perfectly preserving the original object's `ColorSource`, `ObjectColor`, and layer assignments.
+* **Directional Projection & Flattening:** `ccProjectSrf` enforces strict Z-axis directional projections based on true 3D elevation. `ccDrape` flattens the surface above the target bounding box to guarantee absolute hits, but can be toggled via the `Flatten starting surface` option.
+* **Interruptible Solvers:** Heavy mathematical computations can be safely aborted at any time via the UI's dynamic "Stop" button or the native `Esc` key.
 
 #### 3. ccMatchSrf
 `ccMatchSrf` is a precise complement to Rhino's native `_MatchSrf`, designed to strictly preserve input knot and control point structures when matching untrimmed surface edges.

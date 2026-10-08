@@ -7,22 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
-## [0.2.9] - 2026-10-05
+## [0.2.9] - 2026-10-07
 
 ### Added
+- `ccProjectSrf`: Added a new companion command dedicated to true directional projection, defaulting to Greville point projection and bypassing surface flattening entirely.
+- `ccDrape` & `ccProjectSrf`: Added full CLI (Command Line Interface) support. Options (`Tolerance`, `Direction`, `MissAction`, `OutputLayer`, etc.) are now dynamically available during geometry selection for macro-friendly, dialog-free execution.
 - `ccDrape`: Added a robust, stateless Eto Dialog UI replacing the legacy Python command-line flow.
+- `ccDrape`: Added an "Output layer" dropdown to route generated geometry to the `Input`, `Current`, or `TargetObject` layer.
+- `ccDrape`: Added a "Delete input" option utilizing `RhinoDoc.Objects.Replace()` to perfectly preserve original object UUIDs, `ColorSource`, and `ObjectColor` attributes.
+- `ccDrape`: Added a "Flatten starting surface" option. When disabled, the tool performs strict directional projection based on the surface's true 3D elevation, cleanly registering misses for geometry "above" the ray origin.
+- `ccDrape`: Added a dynamic "Stop" button and `Esc` key listener to safely abort synchronous Greville and gravity math computations without crashing the UI.
+- `ccDrape`: Added a "Default" button to instantly reset the Tolerance parameter to $10.0 \times$ Document Tolerance based on active document units.
 - `ccDrape`: Added a "Fit method" dropdown in the UI, allowing users to explicitly route the math engine between distinct fitting routines.
-- `ccDrape`: Added "Direct Greville relaxation (Smooth single-surface fit)" as a distinct, user-selectable fitting method for continuous sloped geometries.
-- `ccDrape`: Added a dynamic default routing mechanism; if the command is run for the first time in a session and the target is a single surface, it defaults to the Direct Greville relaxation method.
-- `ccDrape`: Added a text box for numeric "Tolerance" input directly in the General dialog section.
+- `ccDrape`: Added "Project Greville points" (formerly Direct Greville relaxation) as a distinct, user-selectable fitting method for continuous sloped geometries.
 - `ccDrape`: Added caching to the preview surface generation; toggling options in the dialog now instantly loads pre-computed preview meshes.
 
 ### Changed
+- `ccDrape`: Retitled the Eto dialog to "CADacombs Drape / ProjectSrf" and drastically compressed the horizontal footprint using `TableLayout` alignments.
+- `ccDrape`: Moved "Shaded" and "Wireframe" preview checkboxes to a secondary row to tighten the UI, and renamed "Control polygon" to "CPolygon".
 - `ccDrape`: Restructured the mathematical core to remove hidden overrides. `FitIterTranslIndivPts` is no longer automatically forced upon single-surface targets and is now explicitly controlled by the UI.
 
 ### Fixed
-- `ccDrape`: Fixed a native RhinoCommon pipeline issue where pre-selected targets could not be deselected via Ctrl+Click. The command now uses a stateless `AlreadySelectedObjectSelect` loop to perfectly mimic native highlight toggling.
+- `ccDrape`: Fixed a critical array index drift issue where missed surfaces were previously dropped from the processing batch, causing subsequent outputs to inherit incorrect layer and color attributes. Misses are now safely tracked as `null` maintaining 1:1 parity with the input selection.
+- `ccDrape`: Fixed shading obfuscation in the preview conduit by moving mesh rendering to `PostDrawObjects` and explicitly injecting a 60% alpha material transparency.
 - `ccDrape`: Fixed an execution bug where the math engine would crash if the raycast `ProjectPtsToObjs` array returned entirely null values. The Dialog now safely aborts the preview and alerts the user if the starting surface completely misses the target objects.
+- `ccDrape`: Fixed a native RhinoCommon pipeline issue where pre-selected targets could not be deselected via Ctrl+Click.
 
 ## [0.2.8] - 2026-09-21
 

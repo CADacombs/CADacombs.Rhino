@@ -14,6 +14,7 @@ namespace CADacombs.Commands.Modeling
         {
             DrapeOptions.HasRunBefore = true; 
             DrapeOptions.UserProvidesStartingSrf = true;
+            DrapeOptions.FlattenStartingSrf = false; 
 
             if (DrapeOptions.FitMethod < 2) 
                 DrapeOptions.FitMethod = 2; 

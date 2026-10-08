@@ -13,10 +13,11 @@ namespace CADacombs.Commands.Modeling
     public static class DrapeLogic
     {
         private static EscapeTracker _escapeTracker;
+        private static Func<bool> _cancelToken;
 
         public static void CheckEscape()
         {
-            if (_escapeTracker != null && _escapeTracker.IsCanceled)
+            if ((_escapeTracker != null && _escapeTracker.IsCanceled) || (_cancelToken?.Invoke() == true))
             {
                 throw new OperationCanceledException("User canceled command.");
             }
@@ -24,7 +25,18 @@ namespace CADacombs.Commands.Modeling
 
         public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs)
         {
-            var results = ComputeDrapeSurfaces(doc, targetRefs, startingSrfRefs, out _, out List<string> messages, out _);
+            List<NurbsSurface> results;
+            List<string> messages;
+
+            try
+            {
+                results = ComputeDrapeSurfaces(doc, targetRefs, startingSrfRefs, out _, out messages, out _);
+            }
+            catch (OperationCanceledException)
+            {
+                return Result.Cancel;
+            }
+
             if (results == null || results.Count == 0) return Result.Failure;
 
             foreach (var msg in messages)
@@ -32,24 +44,75 @@ namespace CADacombs.Commands.Modeling
                 if (!string.IsNullOrEmpty(msg)) RhinoApp.WriteLine(msg);
             }
 
-            if (DrapeOptions.UserProvidesStartingSrf && DrapeOptions.DeleteStartingSrf && startingSrfRefs != null)
+            for (int i = 0; i < results.Count; i++)
             {
-                foreach (var srfRef in startingSrfRefs)
+                var ns = results[i];
+                if (ns == null) continue;
+
+                bool isSelect = DrapeOptions.UserProvidesStartingSrf && startingSrfRefs != null && i < startingSrfRefs.Count;
+                bool doReplace = isSelect && DrapeOptions.DeleteStartingSrf;
+
+                if (doReplace)
                 {
-                    doc.Objects.Delete(srfRef.ObjectId, true);
+                    Guid idToReplace = startingSrfRefs[i].ObjectId;
+                    doc.Objects.Replace(idToReplace, ns);
+                    
+                    if (DrapeOptions.OutputLayer != 0) 
+                    {
+                        var rhObj = doc.Objects.FindId(idToReplace);
+                        if (rhObj != null)
+                        {
+                            var modAttr = rhObj.Attributes.Duplicate();
+                            if (DrapeOptions.OutputLayer == 1)
+                            {
+                                modAttr.LayerIndex = doc.Layers.CurrentLayerIndex;
+                                modAttr.ColorSource = ObjectColorSource.ColorFromLayer;
+                            }
+                            else if (DrapeOptions.OutputLayer == 2 && targetRefs != null && targetRefs.Length > 0 && targetRefs[0].Object() != null)
+                            {
+                                var tgtAttr = targetRefs[0].Object().Attributes;
+                                modAttr.LayerIndex = tgtAttr.LayerIndex;
+                                modAttr.ColorSource = tgtAttr.ColorSource;
+                                modAttr.ObjectColor = tgtAttr.ObjectColor;
+                            }
+                            doc.Objects.ModifyAttributes(rhObj, modAttr, true);
+                        }
+                    }
+                }
+                else
+                {
+                    var attr = new ObjectAttributes();
+                    if (DrapeOptions.OutputLayer == 0 && isSelect && startingSrfRefs != null && i < startingSrfRefs.Count && startingSrfRefs[i].Object() != null)
+                    {
+                        var srcAttr = startingSrfRefs[i].Object().Attributes;
+                        attr.LayerIndex = srcAttr.LayerIndex;
+                        attr.ColorSource = srcAttr.ColorSource;
+                        attr.ObjectColor = srcAttr.ObjectColor;
+                    }
+                    else if (DrapeOptions.OutputLayer == 2 && targetRefs != null && targetRefs.Length > 0 && targetRefs[0].Object() != null)
+                    {
+                        var tgtAttr = targetRefs[0].Object().Attributes;
+                        attr.LayerIndex = tgtAttr.LayerIndex;
+                        attr.ColorSource = tgtAttr.ColorSource;
+                        attr.ObjectColor = tgtAttr.ObjectColor;
+                    }
+                    else
+                    {
+                        attr.LayerIndex = doc.Layers.CurrentLayerIndex;
+                        attr.ColorSource = ObjectColorSource.ColorFromLayer;
+                    }
+
+                    doc.Objects.AddSurface(ns, attr);
                 }
             }
 
-            foreach (var ns in results)
-            {
-                doc.Objects.AddSurface(ns);
-            }
             doc.Views.Redraw();
             return Result.Success;
         }
 
-        public static List<NurbsSurface> ComputeDrapeSurfaces(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, out bool anyPartialMisses, out List<string> messages, out double maxDeviation, Action progressCallback = null)
+        public static List<NurbsSurface> ComputeDrapeSurfaces(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, out bool anyPartialMisses, out List<string> messages, out double maxDeviation, Action progressCallback = null, Func<bool> cancelToken = null)
         {
+            _cancelToken = cancelToken;
             anyPartialMisses = false;
             messages = new List<string>();
             maxDeviation = 0.0;
@@ -57,106 +120,118 @@ namespace CADacombs.Commands.Modeling
 
             using (_escapeTracker = new EscapeTracker())
             {
-                try
+                var targetBreps = new List<Brep>();
+                var targetMeshes = new List<Mesh>();
+
+                foreach (var r in targetRefs)
                 {
-                    var targetBreps = new List<Brep>();
-                    var targetMeshes = new List<Mesh>();
-
-                    foreach (var r in targetRefs)
-                    {
-                        var geom = r.Geometry();
-                        
-                        if (geom is SubD subD)
-                        {
-                            var limitMesh = Mesh.CreateFromSubD(subD, 3);
-                            if (limitMesh != null) targetMeshes.Add(limitMesh);
-                            else
-                            {
-                                var proxyBrep = subD.ToBrep(new SubDToBrepOptions());
-                                if (proxyBrep != null) targetBreps.Add(proxyBrep);
-                            }
-                        }
-                        else if (geom is Brep b) targetBreps.Add(b);
-                        else if (geom is Mesh m) targetMeshes.Add(m);
-                    }
-
-                    if (targetBreps.Count == 0 && targetMeshes.Count == 0)
-                    {
-                        RhinoApp.WriteLine("No valid target geometry could be extracted.");
-                        return outSurfaces;
-                    }
-
-                    var view = doc.Views.ActiveView;
-                    if (view == null) return outSurfaces;
+                    var geom = r.Geometry();
                     
-                    Plane cPlane = view.ActiveViewport.ConstructionPlane();
-                    if (DrapeOptions.FlipCPlane) cPlane.Flip();
-
-                    Transform xformToW = Transform.Identity;
-                    Transform xformFromW = Transform.Identity;
-
-                    if (!cPlane.Equals(Plane.WorldXY))
+                    if (geom is SubD subD)
                     {
-                        xformToW = Transform.PlaneToPlane(cPlane, Plane.WorldXY);
-                        xformFromW = Transform.PlaneToPlane(Plane.WorldXY, cPlane);
+                        var limitMesh = Mesh.CreateFromSubD(subD, 3);
+                        if (limitMesh != null) targetMeshes.Add(limitMesh);
+                        else
+                        {
+                            var proxyBrep = subD.ToBrep(new SubDToBrepOptions());
+                            if (proxyBrep != null) targetBreps.Add(proxyBrep);
+                        }
+                    }
+                    else if (geom is Brep b) targetBreps.Add(b);
+                    else if (geom is Mesh m) targetMeshes.Add(m);
+                }
 
-                        foreach (var b in targetBreps) b.Transform(xformToW);
-                        foreach (var m in targetMeshes) m.Transform(xformToW);
+                if (targetBreps.Count == 0 && targetMeshes.Count == 0)
+                {
+                    RhinoApp.WriteLine("No valid target geometry could be extracted.");
+                    return outSurfaces;
+                }
+
+                var view = doc.Views.ActiveView;
+                if (view == null) return outSurfaces;
+                
+                Plane cPlane = view.ActiveViewport.ConstructionPlane();
+                if (DrapeOptions.FlipCPlane) cPlane.Flip();
+
+                Transform xformToW = Transform.Identity;
+                Transform xformFromW = Transform.Identity;
+
+                if (!cPlane.Equals(Plane.WorldXY))
+                {
+                    xformToW = Transform.PlaneToPlane(cPlane, Plane.WorldXY);
+                    xformFromW = Transform.PlaneToPlane(Plane.WorldXY, cPlane);
+
+                    foreach (var b in targetBreps) b.Transform(xformToW);
+                    foreach (var m in targetMeshes) m.Transform(xformToW);
+                }
+
+                int totalSurfaces = (startingSrfRefs != null && startingSrfRefs.Count > 0) ? startingSrfRefs.Count : 1;
+                int totalMisses = 0;
+
+                bool flatten = !DrapeOptions.UserProvidesStartingSrf || DrapeOptions.FlattenStartingSrf;
+
+                for (int i = 0; i < totalSurfaces; i++)
+                {
+                    CheckEscape();
+                    NurbsSurface nsWIP = null;
+
+                    if (startingSrfRefs == null || startingSrfRefs.Count == 0)
+                    {
+                        var allGeom = new List<GeometryBase>();
+                        allGeom.AddRange(targetBreps);
+                        allGeom.AddRange(targetMeshes);
+                        nsWIP = CreateStartingSurface(allGeom, DrapeOptions.SpanSpacing, DrapeOptions.SpansBeyondEachSide);
+                    }
+                    else
+                    {
+                        Surface srf = startingSrfRefs[i].Surface();
+                        if (srf == null && startingSrfRefs[i].Brep()?.Faces.Count == 1)
+                            srf = startingSrfRefs[i].Brep().Faces[0].UnderlyingSurface();
+                        
+                        nsWIP = srf?.ToNurbsSurface();
+                        if (nsWIP != null && !xformToW.IsIdentity) nsWIP.Transform(xformToW);
                     }
 
-                    int totalSurfaces = (startingSrfRefs != null && startingSrfRefs.Count > 0) ? startingSrfRefs.Count : 1;
-                    int totalMisses = 0;
-
-                    for (int i = 0; i < totalSurfaces; i++)
+                    if (nsWIP == null) 
                     {
-                        NurbsSurface nsWIP = null;
+                        outSurfaces.Add(null);
+                        continue;
+                    }
 
-                        if (startingSrfRefs == null || startingSrfRefs.Count == 0)
-                        {
-                            var allGeom = new List<GeometryBase>();
-                            allGeom.AddRange(targetBreps);
-                            allGeom.AddRange(targetMeshes);
-                            nsWIP = CreateStartingSurface(allGeom, DrapeOptions.SpanSpacing, DrapeOptions.SpansBeyondEachSide);
-                        }
-                        else
-                        {
-                            Surface srf = startingSrfRefs[i].Surface();
-                            if (srf == null && startingSrfRefs[i].Brep()?.Faces.Count == 1)
-                                srf = startingSrfRefs[i].Brep().Faces[0].UnderlyingSurface();
-                            
-                            nsWIP = srf?.ToNurbsSurface();
-                            if (nsWIP != null && !xformToW.IsIdentity) nsWIP.Transform(xformToW);
-                        }
+                    Point3d[,] raycastPts;
+                    if (DrapeOptions.FitMethod == 3)
+                        raycastPts = GetControlPointLocations(nsWIP);
+                    else
+                        raycastPts = GetGrevillePoints(nsWIP);
 
-                        if (nsWIP == null) continue;
+                    Point3d?[,] targetPts = ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance, flatten);
+                    
+                    if (targetPts == null)
+                    {
+                        outSurfaces.Add(null);
+                        continue;
+                    }
 
-                        Point3d[,] raycastPts;
-                        if (DrapeOptions.FitMethod == 3)
-                            raycastPts = GetControlPointLocations(nsWIP);
-                        else
-                            raycastPts = GetGrevillePoints(nsWIP);
+                    bool hitAnything = false;
+                    foreach (var pt in targetPts) 
+                    { 
+                        if (pt.HasValue) { hitAnything = true; break; } 
+                    }
 
-                        Point3d?[,] targetPts = ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance);
-                        if (targetPts == null) continue;
+                    if (!hitAnything) 
+                    {
+                        outSurfaces.Add(null);
+                        totalMisses++;
+                        progressCallback?.Invoke();
+                        continue;
+                    }
 
-                        bool hitAnything = false;
-                        foreach (var pt in targetPts) 
-                        { 
-                            if (pt.HasValue) { hitAnything = true; break; } 
-                        }
+                    bool hasMisses = HasMissingPoints(targetPts);
+                    if (hasMisses) anyPartialMisses = true;
 
-                        if (!hitAnything) 
-                        {
-                            totalMisses++;
-                            progressCallback?.Invoke();
-                            continue;
-                        }
-
-                        bool hasMisses = HasMissingPoints(targetPts);
-                        if (hasMisses) anyPartialMisses = true;
-
+                    if (flatten)
+                    {
                         double zMax = HighestElevation(targetPts);
-                        
                         for (int u = 0; u < nsWIP.Points.CountU; u++)
                         {
                             for (int v = 0; v < nsWIP.Points.CountV; v++)
@@ -165,49 +240,45 @@ namespace CADacombs.Commands.Modeling
                                 nsWIP.Points.SetPoint(u, v, cp.Location.X, cp.Location.Y, zMax);
                             }
                         }
-
-                        if (hasMisses)
-                        {
-                            targetPts = ResolveMissingPoints(targetPts, raycastPts, nsWIP, DrapeOptions.TargetMisses);
-                        }
-
-                        NurbsSurface nsOut;
-                        if (DrapeOptions.FitMethod == 3)
-                        {
-                            nsOut = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP);
-                        }
-                        else if (DrapeOptions.FitMethod == 2)
-                        {
-                            var res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.SolverTimeout);
-                            nsOut = res.Surface;
-                            maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
-                            if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
-                        }
-                        else
-                        {
-                            nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0);
-                        }
-
-                        if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
-
-                        outSurfaces.Add(nsOut);
-                        progressCallback?.Invoke();
                     }
 
-                    if (totalMisses > 0)
+                    if (hasMisses)
                     {
-                        if (totalSurfaces == 1)
-                            RhinoApp.WriteLine("The starting surface completely misses the targets.");
-                        else
-                            RhinoApp.WriteLine($"{totalMisses} of {totalSurfaces} starting surfaces completely miss the targets.");
+                        targetPts = ResolveMissingPoints(targetPts, raycastPts, nsWIP, DrapeOptions.TargetMisses);
                     }
 
-                    return outSurfaces;
+                    NurbsSurface nsOut;
+                    if (DrapeOptions.FitMethod == 3)
+                    {
+                        nsOut = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP);
+                    }
+                    else if (DrapeOptions.FitMethod == 2)
+                    {
+                        var res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.SolverTimeout, _cancelToken);
+                        nsOut = res.Surface;
+                        maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
+                        if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
+                    }
+                    else
+                    {
+                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0, flatten);
+                    }
+
+                    if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
+
+                    outSurfaces.Add(nsOut);
+                    progressCallback?.Invoke();
                 }
-                catch (OperationCanceledException)
+
+                if (totalMisses > 0)
                 {
-                    return outSurfaces;
+                    if (totalSurfaces == 1)
+                        RhinoApp.WriteLine("The starting surface completely misses the targets.");
+                    else
+                        RhinoApp.WriteLine($"{totalMisses} of {totalSurfaces} starting surfaces completely miss the targets.");
                 }
+
+                return outSurfaces;
             }
         }
 
@@ -273,7 +344,7 @@ namespace CADacombs.Commands.Modeling
             return pts;
         }
 
-        private static Point3d?[,] ProjectPtsToObjs(Point3d[,] ptsIn, List<Brep> breps, List<Mesh> meshes, double docTol)
+        private static Point3d?[,] ProjectPtsToObjs(Point3d[,] ptsIn, List<Brep> breps, List<Mesh> meshes, double docTol, bool flatten)
         {
             int countU = ptsIn.GetLength(0);
             int countV = ptsIn.GetLength(1);
@@ -285,19 +356,27 @@ namespace CADacombs.Commands.Modeling
                 for (int v = 0; v < countV; v++)
                 {
                     CheckEscape();
-                    var projectedPts = new List<Point3d>();
+                    var rawPts = new List<Point3d>();
                     Point3d pt = ptsIn[u, v];
 
                     if (meshes.Count > 0)
                     {
                         var meshHits = Intersection.ProjectPointsToMeshes(meshes, new[] { pt }, Vector3d.ZAxis, rayTol);
-                        if (meshHits != null) projectedPts.AddRange(meshHits);
+                        if (meshHits != null) rawPts.AddRange(meshHits);
                     }
 
                     if (breps.Count > 0)
                     {
                         var brepHits = Intersection.ProjectPointsToBreps(breps, new[] { pt }, Vector3d.ZAxis, rayTol);
-                        if (brepHits != null) projectedPts.AddRange(brepHits);
+                        if (brepHits != null) rawPts.AddRange(brepHits);
+                    }
+
+                    var projectedPts = new List<Point3d>();
+                    foreach (var hit in rawPts)
+                    {
+                        // If unflattened, enforce strict directionality. We only accept hits "downward" relative to the point.
+                        if (!flatten && hit.Z > pt.Z + rayTol) continue;
+                        projectedPts.Add(hit);
                     }
 
                     if (projectedPts.Count == 0)
@@ -495,7 +574,7 @@ namespace CADacombs.Commands.Modeling
             return modified;
         }
 
-        private static NurbsSurface FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug, bool skirtBorders)
+        private static NurbsSurface FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug, bool skirtBorders, bool flatten)
         {
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = ptsTarget.GetLength(0);
@@ -577,21 +656,35 @@ namespace CADacombs.Commands.Modeling
                 uvsNeighborsPerElevGroup.Add(neighbors);
             }
 
-            double zMax = HighestElevation(ptsTarget);
-
-            if (uvsInElevGroups.Count > 0)
+            if (flatten)
             {
-                foreach (var (u, v) in uvsInElevGroups[0])
+                double zMax = HighestElevation(ptsTarget);
+                if (uvsInElevGroups.Count > 0)
                 {
-                    ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
-                    cp.Z = zMax;
-                    nsOut.Points.SetControlPoint(u, v, cp);
+                    foreach (var (u, v) in uvsInElevGroups[0])
+                    {
+                        ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
+                        cp.Z = zMax;
+                        nsOut.Points.SetControlPoint(u, v, cp);
+                    }
+                    foreach (var (u, v) in uvsNeighborsPerElevGroup[0])
+                    {
+                        ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
+                        cp.Z = zMax;
+                        nsOut.Points.SetControlPoint(u, v, cp);
+                    }
                 }
-                foreach (var (u, v) in uvsNeighborsPerElevGroup[0])
+            }
+            else
+            {
+                if (uvsInElevGroups.Count > 0)
                 {
-                    ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
-                    cp.Z = zMax;
-                    nsOut.Points.SetControlPoint(u, v, cp);
+                    foreach (var (u, v) in uvsInElevGroups[0])
+                    {
+                        ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
+                        cp.Z = ptsTarget[u, v].Value.Z;
+                        nsOut.Points.SetControlPoint(u, v, cp);
+                    }
                 }
             }
 
