@@ -199,7 +199,7 @@ namespace CADacombs.Commands.Modeling
             _chkShowPolygon.CheckedChanged += displayEvent;
 
             _lblProcessedCount = new Label { Text = "Processed 0 surface(s)." };
-            _lblMaxDev = new Label { Text = "Max dev: 0", TextColor = Colors.DimGray };
+            _lblMaxDev = new Label { Text = "", TextColor = Colors.DimGray, Wrap = WrapMode.Word };
             _progressBar = new ProgressBar { MinValue = 0, MaxValue = 1, Value = 0, Visible = false, Height = 10 };
 
             _btnPreview = new Button { Text = "Preview", Width = 75, Enabled = false };
@@ -282,8 +282,9 @@ namespace CADacombs.Commands.Modeling
             btnDefaultTol.Click += (s, e) => 
             {
                 _isUpdatingTextProgrammatically = true;
-                _txtTolerance.Text = (10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance).ToString("G");
-                DrapeOptions.Tolerance = 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+                double defaultTol = 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+                _txtTolerance.Text = defaultTol.ToString("G");
+                DrapeOptions.Tolerance = defaultTol;
                 _txtTolerance.BackgroundColor = Colors.White;
                 _isUpdatingTextProgrammatically = false;
                 UpdatePreview(true);
@@ -319,7 +320,10 @@ namespace CADacombs.Commands.Modeling
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             
             layout.AddRow(_progressBar);
-            layout.AddRow(new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, Items = { _lblProcessedCount, _lblMaxDev } });
+
+            var bottomStatusStack = new StackLayout { Orientation = Orientation.Vertical, Spacing = 5, Items = { _lblProcessedCount, _lblMaxDev } };
+            layout.AddRow(bottomStatusStack);
+            
             layout.AddRow(new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { _btnOk, _btnCancel } });
 
             Content = layout;
@@ -374,6 +378,8 @@ namespace CADacombs.Commands.Modeling
             _btnPreview.Font = new Eto.Drawing.Font(SystemFont.Bold, _btnPreview.Font.Size);
             _lblProcessedCount.Text = message;
             _lblMaxDev.Text = "";
+            _lblMaxDev.TextColor = Colors.DimGray;
+            _lblMaxDev.Font = new Eto.Drawing.Font(SystemFont.Default, _lblMaxDev.Font.Size);
             
             if (ParentWindow != null) this.Size = new Size(this.Width, -1);
         }
@@ -388,14 +394,18 @@ namespace CADacombs.Commands.Modeling
 
             _lblProcessedCount.Text = $"Processed {processedCount} surface(s).";
 
-            if (DrapeOptions.FitMethod == 2)
+            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+            _lblMaxDev.Text = $"Max. Greville point deviation from target(s): {FormatUtils.FormatDistance(maxDev, prec)}";
+            
+            if (maxDev > DrapeOptions.Tolerance)
             {
-                int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
-                _lblMaxDev.Text = $"Max dev: {FormatUtils.FormatDistance(maxDev, prec)}";
+                _lblMaxDev.TextColor = Colors.DarkRed;
+                _lblMaxDev.Font = new Eto.Drawing.Font(SystemFont.Bold, _lblMaxDev.Font.Size);
             }
             else
             {
-                _lblMaxDev.Text = "";
+                _lblMaxDev.TextColor = Colors.DimGray;
+                _lblMaxDev.Font = new Eto.Drawing.Font(SystemFont.Default, _lblMaxDev.Font.Size);
             }
         }
 
@@ -482,14 +492,19 @@ namespace CADacombs.Commands.Modeling
                 return;
             }
 
+            double minSpan = 1000.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
             double minTol = 1e-6 * RhinoMath.UnitScale(UnitSystem.Millimeters, RhinoDoc.ActiveDoc.ModelUnitSystem);
             
             _isUpdatingTextProgrammatically = true;
             bool allValid = true;
 
-            if (double.TryParse(_txtSpanSpacing.Text, out double spacing) && spacing > RhinoMath.ZeroTolerance)
+            if (double.TryParse(_txtSpanSpacing.Text, out double spacing))
             {
+                if (spacing < 0) spacing = DrapeOptions.GetDefaultSpanSpacing(RhinoDoc.ActiveDoc);
+                if (spacing < minSpan) spacing = minSpan;
+                
                 DrapeOptions.SpanSpacing = spacing;
+                _txtSpanSpacing.Text = spacing.ToString("G");
                 _txtSpanSpacing.BackgroundColor = Colors.White;
             }
             else
@@ -498,14 +513,13 @@ namespace CADacombs.Commands.Modeling
                 allValid = false;
             }
 
-            if (double.TryParse(_txtTolerance.Text, out double tol) && tol > RhinoMath.ZeroTolerance)
+            if (double.TryParse(_txtTolerance.Text, out double tol))
             {
-                if (tol < minTol)
-                {
-                    tol = minTol;
-                    _txtTolerance.Text = tol.ToString("G");
-                }
+                if (tol < 0) tol = 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+                if (tol < minTol) tol = minTol;
+                
                 DrapeOptions.Tolerance = tol;
+                _txtTolerance.Text = tol.ToString("G");
                 _txtTolerance.BackgroundColor = Colors.White;
             }
             else
@@ -518,7 +532,7 @@ namespace CADacombs.Commands.Modeling
 
             if (!allValid)
             {
-                SetPreviewRequired("Invalid tolerance entered.");
+                SetPreviewRequired("Invalid parameter entered.");
                 return;
             }
                 

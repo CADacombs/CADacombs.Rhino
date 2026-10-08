@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
-## [0.2.9] - 2026-10-07
+## [0.2.9] - 2026-10-08
 
 ### Added
 - `ccProjectSrf`: Added a new companion command dedicated to true directional projection, defaulting to Greville point projection and bypassing surface flattening entirely.

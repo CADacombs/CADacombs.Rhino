@@ -7,6 +7,7 @@ using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.Geometry.Intersect;
 using CADacombs.Core;
+using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Modeling
 {
@@ -250,7 +251,10 @@ namespace CADacombs.Commands.Modeling
                     NurbsSurface nsOut;
                     if (DrapeOptions.FitMethod == 3)
                     {
-                        nsOut = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP);
+                        var res = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP, DrapeOptions.Tolerance);
+                        nsOut = res.Surface;
+                        maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
+                        if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
                     }
                     else if (DrapeOptions.FitMethod == 2)
                     {
@@ -261,7 +265,10 @@ namespace CADacombs.Commands.Modeling
                     }
                     else
                     {
-                        nsOut = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0, flatten);
+                        var res = FitIterTranslHighToLow9Pts(targetPts, nsWIP, DrapeOptions.Tolerance, DrapeOptions.Debug, DrapeOptions.FitMethod == 0, flatten);
+                        nsOut = res.Surface;
+                        maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
+                        if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
                     }
 
                     if (!xformFromW.IsIdentity) nsOut.Transform(xformFromW);
@@ -374,7 +381,6 @@ namespace CADacombs.Commands.Modeling
                     var projectedPts = new List<Point3d>();
                     foreach (var hit in rawPts)
                     {
-                        // If unflattened, enforce strict directionality. We only accept hits "downward" relative to the point.
                         if (!flatten && hit.Z > pt.Z + rayTol) continue;
                         projectedPts.Add(hit);
                     }
@@ -574,8 +580,11 @@ namespace CADacombs.Commands.Modeling
             return modified;
         }
 
-        private static NurbsSurface FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug, bool skirtBorders, bool flatten)
+        private static ProjectionResult FitIterTranslHighToLow9Pts(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, bool bDebug, bool skirtBorders, bool flatten)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int totalIterations = 0;
+
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = ptsTarget.GetLength(0);
             int countV = ptsTarget.GetLength(1);
@@ -692,6 +701,8 @@ namespace CADacombs.Commands.Modeling
 
             for (int iGroup = 1; iGroup < uvsInElevGroups.Count; iGroup++)
             {
+                totalIterations++;
+                
                 var targetGroup = uvsInElevGroups[iGroup];
                 var neighborsOfGroup = uvsNeighborsPerElevGroup[iGroup];
                 
@@ -732,6 +743,7 @@ namespace CADacombs.Commands.Modeling
                     double fractionL = 0.0, fractionH = 1.0;
                     while (true)
                     {
+                        totalIterations++;
                         CheckEscape();
                         double fractionM = 0.5 * fractionL + 0.5 * fractionH;
 
@@ -798,7 +810,40 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            return nsOut;
+            sw.Stop();
+            double maxDev = 0.0;
+            for (int u = 0; u < countU; u++)
+            {
+                for (int v = 0; v < countV; v++)
+                {
+                    if (ptsTarget[u, v].HasValue)
+                    {
+                        Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
+                        Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
+                        double dist = ptGr.DistanceTo(ptsTarget[u, v].Value);
+                        if (dist > maxDev) maxDev = dist;
+                    }
+                }
+            }
+
+            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+            string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
+
+            string msg = $"{totalIterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. Greville point deviation from target(s): {maxDevStr}";
+            if (maxDev > fTolerance)
+            {
+                msg += " <- Out of tolerance";
+            }
+
+            return new ProjectionResult
+            {
+                Surface = nsOut,
+                Iterations = totalIterations,
+                ElapsedSeconds = sw.Elapsed.TotalSeconds,
+                MaxDeviation = maxDev,
+                Converged = maxDev <= fTolerance,
+                Message = msg
+            };
         }
     }
 }

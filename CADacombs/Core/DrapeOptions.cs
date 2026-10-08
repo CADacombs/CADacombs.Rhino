@@ -35,5 +35,11 @@ namespace CADacombs.Core
 
         public static bool Echo { get; set; } = true;
         public static bool Debug { get; set; } = false;
+
+        public static double GetDefaultSpanSpacing(RhinoDoc doc)
+        {
+            if (doc.ModelUnitSystem == UnitSystem.Inches) return 1.0;
+            return 25.0 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
+        }
     }
 }

@@ -28,7 +28,6 @@ namespace CADacombs.Core
             double maxDev = 0.0;
             bool converged = false;
 
-            // Initial explicit snap
             for (int u = 0; u < countU; u++)
             {
                 for (int v = 0; v < countV; v++)
@@ -48,7 +47,6 @@ namespace CADacombs.Core
                 }
             }
 
-            // Iterative relaxation loop bounded by timeout and cancel token
             while (sw.Elapsed.TotalSeconds < timeoutSecs)
             {
                 if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
@@ -90,12 +88,11 @@ namespace CADacombs.Core
 
             int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
             string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
-            string tolStr = FormatUtils.FormatDistance(fTolerance, prec);
 
-            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max deviation: {maxDevStr}.";
+            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. Greville point deviation from target(s): {maxDevStr}";
             if (!converged && maxDev > fTolerance)
             {
-                msg += $" All Greville points do not lie on target(s) within {tolStr}.";
+                msg += " <- Out of tolerance";
             }
 
             return new ProjectionResult
@@ -109,8 +106,9 @@ namespace CADacombs.Core
             };
         }
 
-        public static NurbsSurface FitDirectControlPoints(Point3d?[,] ptsTarget, NurbsSurface nsIn)
+        public static ProjectionResult FitDirectControlPoints(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = nsIn.Points.CountU;
             int countV = nsIn.Points.CountV;
@@ -127,7 +125,41 @@ namespace CADacombs.Core
                     }
                 }
             }
-            return nsOut;
+            sw.Stop();
+
+            double maxDev = 0.0;
+            for (int u = 0; u < countU; u++)
+            {
+                for (int v = 0; v < countV; v++)
+                {
+                    if (ptsTarget[u, v].HasValue)
+                    {
+                        Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
+                        Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
+                        double dist = ptGr.DistanceTo(ptsTarget[u, v].Value);
+                        if (dist > maxDev) maxDev = dist;
+                    }
+                }
+            }
+
+            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+            string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
+
+            string msg = $"1 iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. Greville point deviation from target(s): {maxDevStr}";
+            if (maxDev > fTolerance)
+            {
+                msg += " <- Out of tolerance";
+            }
+
+            return new ProjectionResult
+            {
+                Surface = nsOut,
+                Iterations = 1,
+                ElapsedSeconds = sw.Elapsed.TotalSeconds,
+                MaxDeviation = maxDev,
+                Converged = maxDev <= fTolerance,
+                Message = msg 
+            };
         }
     }
 }

@@ -41,22 +41,22 @@ namespace CADacombs.Commands.Modeling
             }
 
             if (doc.ModelUnitSystem != UnitSystem.Inches && DrapeOptions.SpanSpacing == 1.0)
-                DrapeOptions.SpanSpacing = 25.0 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
+                DrapeOptions.SpanSpacing = DrapeOptions.GetDefaultSpanSpacing(doc);
 
             List<ObjRef> targetRefs = new List<ObjRef>();
             List<ObjRef> startingSrfRefs = new List<ObjRef>();
 
-            // Instantiate option trackers so values persist inside the command loops
             string[] missList = { "FixToStart", "LowestNeighbor", "Extrapolate" };
             string[] outList = { "Input", "Current", "TargetObject" };
-            string[] projList = { "Greville", "ControlPoints" };
-            string[] drapeList = { "Skirted", "Hugging" };
 
             var opDir = new OptionToggle(DrapeOptions.FlipCPlane, "CPlaneNegativeZ", "CPlanePositiveZ");
             var opStart = new OptionToggle(DrapeOptions.UserProvidesStartingSrf, "Create", "Select");
             var opSpan = new OptionDouble(DrapeOptions.SpanSpacing);
             var opBeyond = new OptionInteger(DrapeOptions.SpansBeyondEachSide);
             var opTol = new OptionDouble(DrapeOptions.Tolerance);
+            
+            var opProjectMethod = new OptionToggle(DrapeOptions.FitMethod == 3, "GrevillePts", "ControlPts");
+            var opDrapeMethod = new OptionToggle(DrapeOptions.FitMethod == 1, "Skirted", "Hugging");
 
             if (cmdMode == DrapeCommandMode.Project)
             {
@@ -71,7 +71,15 @@ namespace CADacombs.Commands.Modeling
 
                 while (true)
                 {
-                    SetupCommandOptions(goTargets, cmdMode, mode);
+                    goTargets.ClearCommandOptions();
+                    if (mode == RunMode.Scripted)
+                    {
+                        goTargets.AddOptionToggle("ProjectMethod", ref opProjectMethod);
+                        goTargets.AddOptionDouble("Tolerance", ref opTol);
+                        goTargets.AddOptionToggle("Direction", ref opDir);
+                        goTargets.AddOptionList("MissAction", missList, DrapeOptions.TargetMisses);
+                        goTargets.AddOptionList("OutputLayer", outList, DrapeOptions.OutputLayer);
+                    }
 
                     var resTargets = goTargets.GetMultiple(1, 0);
 
@@ -80,8 +88,16 @@ namespace CADacombs.Commands.Modeling
                         var opt = goTargets.Option();
                         string name = opt.EnglishName;
 
-                        if (name == "ProjectMethod") DrapeOptions.FitMethod = opt.CurrentListOptionIndex + 2;
-                        else if (name == "Tolerance") DrapeOptions.Tolerance = opTol.CurrentValue;
+                        if (name == "ProjectMethod") DrapeOptions.FitMethod = opProjectMethod.CurrentValue ? 3 : 2;
+                        else if (name == "Tolerance")
+                        {
+                            double val = opTol.CurrentValue;
+                            double minTol = 1e-6 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
+                            if (val < 0) val = 10.0 * doc.ModelAbsoluteTolerance;
+                            if (val < minTol) val = minTol;
+                            DrapeOptions.Tolerance = val;
+                            opTol.CurrentValue = val;
+                        }
                         else if (name == "Direction") DrapeOptions.FlipCPlane = opDir.CurrentValue;
                         else if (name == "MissAction") DrapeOptions.TargetMisses = opt.CurrentListOptionIndex;
                         else if (name == "OutputLayer") DrapeOptions.OutputLayer = opt.CurrentListOptionIndex;
@@ -122,7 +138,21 @@ namespace CADacombs.Commands.Modeling
 
                 while (true)
                 {
-                    SetupCommandOptions(goTargets, cmdMode, mode);
+                    goTargets.ClearCommandOptions();
+                    if (mode == RunMode.Scripted)
+                    {
+                        goTargets.AddOptionToggle("StartingSurface", ref opStart);
+                        if (!DrapeOptions.UserProvidesStartingSrf)
+                        {
+                            goTargets.AddOptionDouble("SpanSpacing", ref opSpan);
+                            goTargets.AddOptionInteger("SpansBeyond", ref opBeyond);
+                        }
+                        goTargets.AddOptionToggle("DrapeMethod", ref opDrapeMethod);
+                        goTargets.AddOptionDouble("Tolerance", ref opTol);
+                        goTargets.AddOptionToggle("Direction", ref opDir);
+                        goTargets.AddOptionList("MissAction", missList, DrapeOptions.TargetMisses);
+                        goTargets.AddOptionList("OutputLayer", outList, DrapeOptions.OutputLayer);
+                    }
 
                     var resTargets = goTargets.GetMultiple(1, 0);
 
@@ -132,10 +162,26 @@ namespace CADacombs.Commands.Modeling
                         string name = opt.EnglishName;
 
                         if (name == "StartingSurface") DrapeOptions.UserProvidesStartingSrf = opStart.CurrentValue;
-                        else if (name == "SpanSpacing") DrapeOptions.SpanSpacing = opSpan.CurrentValue;
+                        else if (name == "SpanSpacing")
+                        {
+                            double val = opSpan.CurrentValue;
+                            double minSpan = 1000.0 * doc.ModelAbsoluteTolerance;
+                            if (val < 0) val = DrapeOptions.GetDefaultSpanSpacing(doc);
+                            if (val < minSpan) val = minSpan;
+                            DrapeOptions.SpanSpacing = val;
+                            opSpan.CurrentValue = val;
+                        }
                         else if (name == "SpansBeyond") DrapeOptions.SpansBeyondEachSide = opBeyond.CurrentValue;
-                        else if (name == "DrapeMethod") DrapeOptions.FitMethod = opt.CurrentListOptionIndex;
-                        else if (name == "Tolerance") DrapeOptions.Tolerance = opTol.CurrentValue;
+                        else if (name == "DrapeMethod") DrapeOptions.FitMethod = opDrapeMethod.CurrentValue ? 1 : 0;
+                        else if (name == "Tolerance")
+                        {
+                            double val = opTol.CurrentValue;
+                            double minTol = 1e-6 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
+                            if (val < 0) val = 10.0 * doc.ModelAbsoluteTolerance;
+                            if (val < minTol) val = minTol;
+                            DrapeOptions.Tolerance = val;
+                            opTol.CurrentValue = val;
+                        }
                         else if (name == "Direction") DrapeOptions.FlipCPlane = opDir.CurrentValue;
                         else if (name == "MissAction") DrapeOptions.TargetMisses = opt.CurrentListOptionIndex;
                         else if (name == "OutputLayer") DrapeOptions.OutputLayer = opt.CurrentListOptionIndex;
@@ -146,8 +192,12 @@ namespace CADacombs.Commands.Modeling
                     {
                         if (!DrapeOptions.UserProvidesStartingSrf)
                         {
-                            DrapeOptions.SpanSpacing = goTargets.Number();
-                            opSpan.CurrentValue = DrapeOptions.SpanSpacing;
+                            double val = goTargets.Number();
+                            double minSpan = 1000.0 * doc.ModelAbsoluteTolerance;
+                            if (val < 0) val = DrapeOptions.GetDefaultSpanSpacing(doc);
+                            if (val < minSpan) val = minSpan;
+                            DrapeOptions.SpanSpacing = val;
+                            opSpan.CurrentValue = val;
                         }
                         else
                         {
@@ -183,7 +233,6 @@ namespace CADacombs.Commands.Modeling
             doc.Views.Redraw();
 
             var conduit = new DrapeConduit { Enabled = true };
-            Result commandResult = Result.Cancel;
 
             while (true)
             {
@@ -258,7 +307,6 @@ namespace CADacombs.Commands.Modeling
                                 doc.Objects.AddSurface(ns, attr);
                             }
                         }
-                        commandResult = Result.Success;
                     }
                     break;
                 }
@@ -422,7 +470,6 @@ namespace CADacombs.Commands.Modeling
                 }
                 else
                 {
-                    commandResult = Result.Cancel;
                     break;
                 }
             }
@@ -430,45 +477,7 @@ namespace CADacombs.Commands.Modeling
             RhinoApp.SetCommandPrompt("");
             conduit.Enabled = false;
             doc.Views.Redraw();
-            return commandResult;
-        }
-
-        private static void SetupCommandOptions(GetObject go, DrapeCommandMode cmdMode, RunMode mode)
-        {
-            go.ClearCommandOptions();
-            
-            if (mode != RunMode.Scripted) return;
-
-            string[] missList = { "FixToStart", "LowestNeighbor", "Extrapolate" };
-            string[] outList = { "Input", "Current", "TargetObject" };
-            string[] projList = { "Greville", "ControlPoints" };
-            string[] drapeList = { "Skirted", "Hugging" };
-
-            var opDir = new OptionToggle(DrapeOptions.FlipCPlane, "CPlaneNegativeZ", "CPlanePositiveZ");
-            var opStart = new OptionToggle(DrapeOptions.UserProvidesStartingSrf, "Create", "Select");
-            var opSpan = new OptionDouble(DrapeOptions.SpanSpacing);
-            var opBeyond = new OptionInteger(DrapeOptions.SpansBeyondEachSide);
-            var opTol = new OptionDouble(DrapeOptions.Tolerance);
-
-            if (cmdMode == DrapeCommandMode.Project)
-            {
-                go.AddOptionList("ProjectMethod", projList, DrapeOptions.FitMethod >= 2 ? DrapeOptions.FitMethod - 2 : 0);
-            }
-            else
-            {
-                go.AddOptionToggle("StartingSurface", ref opStart);
-                if (!DrapeOptions.UserProvidesStartingSrf)
-                {
-                    go.AddOptionDouble("SpanSpacing", ref opSpan);
-                    go.AddOptionInteger("SpansBeyond", ref opBeyond);
-                }
-                go.AddOptionList("DrapeMethod", drapeList, DrapeOptions.FitMethod <= 1 ? DrapeOptions.FitMethod : 0);
-            }
-
-            go.AddOptionDouble("Tolerance", ref opTol);
-            go.AddOptionToggle("Direction", ref opDir);
-            go.AddOptionList("MissAction", missList, DrapeOptions.TargetMisses);
-            go.AddOptionList("OutputLayer", outList, DrapeOptions.OutputLayer);
+            return Result.Success;
         }
 
         public static List<ObjRef> PickCustomSurfaces(List<ObjRef> currentTargets, string prompt, bool allowPreSelect, bool isProjectMode, RunMode mode)
@@ -479,12 +488,12 @@ namespace CADacombs.Commands.Modeling
             if (!allowPreSelect) goSrf.DisablePreSelect();
             goSrf.SubObjectSelect = true; 
 
+            var opDelete = new OptionToggle(DrapeOptions.DeleteStartingSrf, "No", "Yes");
+            var opFlatten = new OptionToggle(DrapeOptions.FlattenStartingSrf, "No", "Yes");
+
             while (true)
             {
                 goSrf.ClearCommandOptions();
-                var opDelete = new OptionToggle(DrapeOptions.DeleteStartingSrf, "No", "Yes");
-                var opFlatten = new OptionToggle(DrapeOptions.FlattenStartingSrf, "No", "Yes");
-
                 if (mode == RunMode.Scripted)
                 {
                     goSrf.AddOptionToggle("DeleteInput", ref opDelete);
