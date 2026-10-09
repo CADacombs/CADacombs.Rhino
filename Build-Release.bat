@@ -6,10 +6,11 @@ echo =======================================
 :: 1. Clean the previous builds to ensure no stale files
 dotnet clean CADacombs\CADacombs.csproj --configuration Release
 
-dotnet restore CADacombs\CADacombs.csproj
+:: Force the restore to evaluate as Release so it maps net48
+dotnet restore CADacombs\CADacombs.csproj -p:Configuration=Release
 
-:: 2. Compile the Release build
-dotnet build CADacombs\CADacombs.csproj --configuration Release
+:: 2. Compile the Release build (using the explicitly generated assets)
+dotnet build CADacombs\CADacombs.csproj --configuration Release --no-restore
 
 :: Check if the build failed and abort if it did
 if %ERRORLEVEL% neq 0 (

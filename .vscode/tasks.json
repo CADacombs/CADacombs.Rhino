@@ -9,7 +9,9 @@
         "build",
         "${workspaceFolder}/CADacombs/CADacombs.csproj",
         "-c",
-        "Debug"
+        "Debug",
+        "-f",
+        "net8.0"
       ],
       "problemMatcher": "$msCompile"
     }

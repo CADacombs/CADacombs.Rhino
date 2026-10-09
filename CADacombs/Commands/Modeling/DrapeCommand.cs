@@ -222,7 +222,13 @@ namespace CADacombs.Commands.Modeling
                 if (DrapeOptions.UserProvidesStartingSrf)
                 {
                     startingSrfRefs = PickCustomSurfaces(targetRefs, "Select custom starting surface(s)", false, false, mode);
-                    if (startingSrfRefs == null || startingSrfRefs.Count == 0) return Result.Cancel;
+                    
+                    if (startingSrfRefs == null) return Result.Cancel; 
+                    
+                    if (startingSrfRefs.Count == 0) 
+                    {
+                        DrapeOptions.UserProvidesStartingSrf = false; 
+                    }
                 }
 
                 if (mode == RunMode.Scripted)
@@ -484,9 +490,11 @@ namespace CADacombs.Commands.Modeling
         {
             var goSrf = new GetObject();
             goSrf.SetCommandPrompt(prompt);
+            if (!isProjectMode) goSrf.SetCommandPromptDefault("Create");
             goSrf.GeometryFilter = ObjectType.Surface;
             if (!allowPreSelect) goSrf.DisablePreSelect();
-            goSrf.SubObjectSelect = true; 
+            goSrf.SubObjectSelect = true;
+            goSrf.AcceptNothing(true);
 
             var opDelete = new OptionToggle(DrapeOptions.DeleteStartingSrf, "No", "Yes");
             var opFlatten = new OptionToggle(DrapeOptions.FlattenStartingSrf, "No", "Yes");
@@ -511,6 +519,7 @@ namespace CADacombs.Commands.Modeling
                 }
 
                 if (resSrf == GetResult.Cancel) return null;
+                if (resSrf == GetResult.Nothing) return new List<ObjRef>();
 
                 if (resSrf == GetResult.Object)
                 {
