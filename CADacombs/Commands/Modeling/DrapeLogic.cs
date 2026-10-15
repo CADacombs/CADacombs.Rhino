@@ -24,6 +24,11 @@ namespace CADacombs.Commands.Modeling
             }
         }
 
+        private static bool CheckEscapeDelegate()
+        {
+            return (_escapeTracker != null && _escapeTracker.IsCanceled) || (_cancelToken?.Invoke() == true);
+        }
+
         public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs)
         {
             List<NurbsSurface> results;
@@ -205,7 +210,7 @@ namespace CADacombs.Commands.Modeling
                     else
                         raycastPts = GetGrevillePoints(nsWIP);
 
-                    Point3d?[,] targetPts = ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance, flatten);
+                    Point3d?[,] targetPts = IntersectionMath.ProjectPtsToObjs(raycastPts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance, flatten, CheckEscapeDelegate);
                     
                     if (targetPts == null)
                     {
@@ -349,57 +354,6 @@ namespace CADacombs.Commands.Modeling
                 }
             }
             return pts;
-        }
-
-        private static Point3d?[,] ProjectPtsToObjs(Point3d[,] ptsIn, List<Brep> breps, List<Mesh> meshes, double docTol, bool flatten)
-        {
-            int countU = ptsIn.GetLength(0);
-            int countV = ptsIn.GetLength(1);
-            var ptsOut = new Point3d?[countU, countV];
-            double rayTol = 0.1 * docTol;
-
-            for (int u = 0; u < countU; u++)
-            {
-                for (int v = 0; v < countV; v++)
-                {
-                    CheckEscape();
-                    var rawPts = new List<Point3d>();
-                    Point3d pt = ptsIn[u, v];
-
-                    if (meshes.Count > 0)
-                    {
-                        var meshHits = Intersection.ProjectPointsToMeshes(meshes, new[] { pt }, Vector3d.ZAxis, rayTol);
-                        if (meshHits != null) rawPts.AddRange(meshHits);
-                    }
-
-                    if (breps.Count > 0)
-                    {
-                        var brepHits = Intersection.ProjectPointsToBreps(breps, new[] { pt }, Vector3d.ZAxis, rayTol);
-                        if (brepHits != null) rawPts.AddRange(brepHits);
-                    }
-
-                    var projectedPts = new List<Point3d>();
-                    foreach (var hit in rawPts)
-                    {
-                        if (!flatten && hit.Z > pt.Z + rayTol) continue;
-                        projectedPts.Add(hit);
-                    }
-
-                    if (projectedPts.Count == 0)
-                    {
-                        ptsOut[u, v] = null;
-                    }
-                    else if (projectedPts.Count == 1)
-                    {
-                        ptsOut[u, v] = projectedPts[0];
-                    }
-                    else
-                    {
-                        ptsOut[u, v] = projectedPts.OrderByDescending(p => p.Z).First();
-                    }
-                }
-            }
-            return ptsOut;
         }
 
         private static double HighestElevation(Point3d?[,] targetPts)
