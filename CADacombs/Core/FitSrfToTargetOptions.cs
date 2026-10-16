@@ -15,13 +15,15 @@ namespace CADacombs.Core
         
         // 0: Closest Point (Pull), 1: Z-Axis (Raycast Projection)
         public static int MappingDirection { get; set; } = 0; 
+        public static bool FlipDirection { get; set; } = false;
         
         // 0: Direct Control Point, 1: Direct Greville, 2: Python Legacy, 3: Weighted / Relaxed
         public static int SolverType { get; set; } = 3; 
 
-        // Python Port & Weighted/Relaxed Specific Options
+        // Advanced Options
+        public static double SamplingLength { get; set; } = 2.0;
         public static int SamplingMode { get; set; } = 0; // 0: Distributed, 1: NearestPoint
-        public static int WeightCurve { get; set; } = 0;  // 0: Linear, 1: Hyperbolic
+        public static int WeightCurve { get; set; } = 2;  // 0: Linear, 1: Hyperbolic, 2: Gaussian
         public static double PercentOfDomain { get; set; } = 5.0;
         
         // Output Settings

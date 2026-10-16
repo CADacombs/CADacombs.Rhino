@@ -94,12 +94,31 @@ namespace CADacombs.Commands.Modeling
 
         public static Result ExecuteBake(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs)
         {
+            var targetBreps = new List<Brep>();
+            var targetMeshes = new List<Mesh>();
+
+            foreach (var r in targetRefs)
+            {
+                var geom = r.Geometry();
+                if (geom is SubD subD) { var lm = Mesh.CreateFromSubD(subD, 3); if (lm != null) targetMeshes.Add(lm); else { var pb = subD.ToBrep(new SubDToBrepOptions()); if (pb != null) targetBreps.Add(pb); } }
+                else if (geom is Brep b) targetBreps.Add(b);
+                else if (geom is Mesh m) targetMeshes.Add(m);
+            }
+
+            var startSrfs = new List<NurbsSurface>();
+            foreach (var r in startingSrfRefs)
+            {
+                Surface srf = r.Surface();
+                if (srf == null && r.Brep()?.Faces.Count == 1) srf = r.Brep().Faces[0].UnderlyingSurface();
+                startSrfs.Add(srf?.ToNurbsSurface());
+            }
+
             List<NurbsSurface> results;
             List<string> messages;
 
             try
             {
-                results = ComputeFitSurfaces(doc, targetRefs, startingSrfRefs, out messages, out _, null, null);
+                results = ComputeFitSurfacesCore(targetBreps, targetMeshes, startSrfs, doc.ModelAbsoluteTolerance, out messages, out _, null, null);
             }
             catch (OperationCanceledException)
             {
@@ -117,7 +136,7 @@ namespace CADacombs.Commands.Modeling
             return Result.Success;
         }
 
-        public static List<NurbsSurface> ComputeFitSurfaces(RhinoDoc doc, ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, out List<string> messages, out double maxDeviation, Action progressCallback, Func<bool> cancelToken)
+        public static List<NurbsSurface> ComputeFitSurfacesCore(List<Brep> targetBreps, List<Mesh> targetMeshes, List<NurbsSurface> startingSrfs, double docTol, out List<string> messages, out double maxDeviation, Action progressCallback, Func<bool> cancelToken)
         {
             _cancelToken = cancelToken;
             messages = new List<string>();
@@ -126,43 +145,20 @@ namespace CADacombs.Commands.Modeling
 
             using (_escapeTracker = new EscapeTracker())
             {
-                var targetBreps = new List<Brep>();
-                var targetMeshes = new List<Mesh>();
-
-                // Extract SubD / Brep / Mesh
-                foreach (var r in targetRefs)
-                {
-                    var geom = r.Geometry();
-                    if (geom is SubD subD)
-                    {
-                        var limitMesh = Mesh.CreateFromSubD(subD, 3);
-                        if (limitMesh != null) targetMeshes.Add(limitMesh);
-                        else
-                        {
-                            var proxyBrep = subD.ToBrep(new SubDToBrepOptions());
-                            if (proxyBrep != null) targetBreps.Add(proxyBrep);
-                        }
-                    }
-                    else if (geom is Brep b) targetBreps.Add(b);
-                    else if (geom is Mesh m) targetMeshes.Add(m);
-                }
-
                 if (targetBreps.Count == 0 && targetMeshes.Count == 0)
                 {
-                    RhinoApp.WriteLine("No valid target geometry could be extracted.");
+                    messages.Add("No valid target geometry could be extracted.");
                     return outSurfaces;
                 }
 
-                int totalSurfaces = startingSrfRefs.Count;
+                int totalSurfaces = startingSrfs.Count;
+                int totalMisses = 0;
+                Vector3d rayDir = FitSrfToTargetOptions.FlipDirection ? Vector3d.ZAxis : -Vector3d.ZAxis;
 
                 for (int i = 0; i < totalSurfaces; i++)
                 {
                     CheckEscape();
-                    Surface srf = startingSrfRefs[i].Surface();
-                    if (srf == null && startingSrfRefs[i].Brep()?.Faces.Count == 1)
-                        srf = startingSrfRefs[i].Brep().Faces[0].UnderlyingSurface();
-
-                    NurbsSurface nsWIP = srf?.ToNurbsSurface();
+                    NurbsSurface nsWIP = startingSrfs[i];
                     if (nsWIP == null) 
                     {
                         outSurfaces.Add(null);
@@ -175,7 +171,6 @@ namespace CADacombs.Commands.Modeling
                     int solverType = FitSrfToTargetOptions.SolverType;
                     int mappingDirection = FitSrfToTargetOptions.MappingDirection;
 
-                    // Standard Solvers 0 & 1 (1:1 Point Mapping)
                     if (solverType == 0 || solverType == 1)
                     {
                         Point3d[,] sourcePts;
@@ -185,17 +180,27 @@ namespace CADacombs.Commands.Modeling
                             sourcePts = GetGrevillePoints(nsWIP);
 
                         Point3d?[,] targetPts;
-                        if (mappingDirection == 0) // Closest Point
+                        if (mappingDirection == 0) 
                             targetPts = IntersectionMath.PullPtsToObjs(sourcePts, targetBreps, targetMeshes, CheckEscapeDelegate);
-                        else // Z-Raycast
-                            targetPts = IntersectionMath.ProjectPtsToObjs(sourcePts, targetBreps, targetMeshes, doc.ModelAbsoluteTolerance, false, CheckEscapeDelegate);
+                        else 
+                            targetPts = IntersectionMath.RaycastPtsToObjs(sourcePts, targetBreps, targetMeshes, rayDir, CheckEscapeDelegate);
+
+                        bool hitAnything = false;
+                        foreach (var pt in targetPts) { if (pt.HasValue) { hitAnything = true; break; } }
+                        
+                        if (!hitAnything)
+                        {
+                            outSurfaces.Add(null);
+                            totalMisses++;
+                            progressCallback?.Invoke();
+                            continue;
+                        }
 
                         if (solverType == 0)
                             res = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP, FitSrfToTargetOptions.Tolerance);
                         else
                             res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate);
                     }
-                    // Advanced Solvers 2 & 3 (Dense Sampling & Complex Math)
                     else if (solverType == 2)
                     {
                         res = ProjectionMath.FitPythonLegacy(nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate);
@@ -207,6 +212,14 @@ namespace CADacombs.Commands.Modeling
 
                     if (res != null)
                     {
+                        if (!res.Converged && res.Iterations == 0) 
+                        {
+                            outSurfaces.Add(null);
+                            totalMisses++;
+                            progressCallback?.Invoke();
+                            continue;
+                        }
+
                         nsOut = res.Surface;
                         maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
                         if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
@@ -214,6 +227,14 @@ namespace CADacombs.Commands.Modeling
 
                     outSurfaces.Add(nsOut);
                     progressCallback?.Invoke();
+                }
+
+                if (totalMisses > 0)
+                {
+                    if (totalSurfaces == 1)
+                        messages.Add("The starting surface completely misses the targets.");
+                    else
+                        messages.Add($"{totalMisses} of {totalSurfaces} starting surfaces completely miss the targets.");
                 }
 
                 return outSurfaces;

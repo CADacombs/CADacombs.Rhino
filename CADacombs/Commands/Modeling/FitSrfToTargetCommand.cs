@@ -30,30 +30,30 @@ namespace CADacombs.Commands.Modeling
                 FitSrfToTargetOptions.LastDocSerialNumber = doc.RuntimeSerialNumber;
             }
 
-            // 1. Select Targets
-            var goTargets = new GetObject();
-            goTargets.SetCommandPrompt("Select target surfaces, polysurfaces, SubDs and meshes");
-            goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
-            goTargets.AcceptNumber(false, false);
-            goTargets.GetMultiple(1, 0);
-
-            if (goTargets.CommandResult() != Result.Success)
-                return goTargets.CommandResult();
-
-            var targetRefs = goTargets.Objects().ToList();
-
-            // 2. Select Starting Surfaces
+            // 1. Select Starting Surfaces (Surfaces to deform) First
             var goSrf = new GetObject();
-            goSrf.SetCommandPrompt("Select custom starting surface(s) to fit to targets");
+            goSrf.SetCommandPrompt("Select surfaces to deform (starting surfaces)");
             goSrf.GeometryFilter = ObjectType.Surface;
             goSrf.SubObjectSelect = true;
-            goSrf.DisablePreSelect();
             goSrf.GetMultiple(1, 0);
 
             if (goSrf.CommandResult() != Result.Success)
                 return goSrf.CommandResult();
 
             var startingSrfRefs = goSrf.Objects().ToList();
+
+            // 2. Select Targets Second
+            var goTargets = new GetObject();
+            goTargets.SetCommandPrompt("Select target surfaces, polysurfaces, SubDs and meshes");
+            goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
+            goTargets.AcceptNumber(false, false);
+            goTargets.DisablePreSelect(); // Prevent accidental re-selection of starting surfaces
+            goTargets.GetMultiple(1, 0);
+
+            if (goTargets.CommandResult() != Result.Success)
+                return goTargets.CommandResult();
+
+            var targetRefs = goTargets.Objects().ToList();
 
             doc.Objects.UnselectAll();
             doc.Views.Redraw();
@@ -84,7 +84,6 @@ namespace CADacombs.Commands.Modeling
                 }
                 else if (dialog.Action == DrapeDialogAction.ReselectTargets)
                 {
-                    // Basic reselect logic
                     goTargets.EnablePreSelect(false, true);
                     goTargets.GetMultiple(1, 0);
                     if (goTargets.CommandResult() == Result.Success)

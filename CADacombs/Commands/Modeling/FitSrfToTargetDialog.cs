@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -11,7 +12,6 @@ using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Modeling
 {
-    // Note: Re-use DrapeDialogAction or define a specific FitSrfToTargetDialogAction
     public class FitSrfToTargetDialog : CADacombsDialogBase
     {
         public DrapeDialogAction Action { get; set; } = DrapeDialogAction.None;
@@ -19,16 +19,18 @@ namespace CADacombs.Commands.Modeling
 
         private ObjRef[] _targetRefs;
         private List<ObjRef> _startingSrfRefs;
-        private DrapeConduit _conduit; // Can rename to FitSrfConduit later
+        private DrapeConduit _conduit;
 
         // UI Elements
         private Button _btnReselSrf;
         private Button _btnAddRemSrf;
         
         private DropDown _dropMappingDirection;
+        private CheckBox _chkFlipDirection;
         private DropDown _dropSolverType;
         
         // Advanced Solver Options
+        private TextBox _txtSamplingLength;
         private DropDown _dropSamplingMode;
         private DropDown _dropWeightCurve;
         private NumericStepper _stepPercentDomain;
@@ -56,13 +58,15 @@ namespace CADacombs.Commands.Modeling
         private bool _isUpdatingTextProgrammatically = false;
         private UITimer _typingTimer;
 
+        private Dictionary<string, (List<NurbsSurface>, List<string>, double)> _previewCache = new Dictionary<string, (List<NurbsSurface>, List<string>, double)>();
+
         public FitSrfToTargetDialog(ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, DrapeConduit conduit)
         {
             _targetRefs = targetRefs;
             _startingSrfRefs = startingSrfRefs;
             _conduit = conduit;
 
-            Title = "CADacombs Fit Surface To Target";
+            Title = "CADacombs Fit Surface to Target";
             Resizable = false;
             AutoSize = true; 
             Padding = new Padding(12);
@@ -74,11 +78,13 @@ namespace CADacombs.Commands.Modeling
             SetupLayout();
             UpdateAdvancedOptionsVisibility();
 
-            // Fire initial preview if valid
-            if (_startingSrfRefs != null && _startingSrfRefs.Count > 0)
+            this.Shown += (s, e) => 
             {
-                UpdatePreview(true);
-            }
+                if (_startingSrfRefs != null && _startingSrfRefs.Count > 0)
+                {
+                    Application.Instance.AsyncInvoke(() => UpdatePreview(true));
+                }
+            };
         }
 
         protected override Eto.Drawing.Point? LoadSavedLocation() => FitSrfToTargetOptions.WindowLocation;
@@ -93,28 +99,35 @@ namespace CADacombs.Commands.Modeling
             _btnAddRemSrf.Click += (s, e) => { Action = DrapeDialogAction.AddRemoveStartingSurfaces; Close(); };
 
             _dropMappingDirection = new DropDown();
-            _dropMappingDirection.Items.Add("Closest Point (Pull)");
-            _dropMappingDirection.Items.Add("Z-Axis (Raycast Projection)");
+            _dropMappingDirection.Items.Add("Closest point (pull)");
+            _dropMappingDirection.Items.Add("Z-axis (raycast projection)");
             _dropMappingDirection.SelectedIndex = FitSrfToTargetOptions.MappingDirection;
-            _dropMappingDirection.SelectedIndexChanged += OnOptionChanged;
+            _dropMappingDirection.SelectedIndexChanged += (s, e) => { UpdateAdvancedOptionsVisibility(); OnOptionChanged(s, e); };
+
+            _chkFlipDirection = new CheckBox { Text = "Flip dir", Checked = FitSrfToTargetOptions.FlipDirection };
+            _chkFlipDirection.CheckedChanged += OnOptionChanged;
 
             _dropSolverType = new DropDown();
-            _dropSolverType.Items.Add("Direct Control Point");
+            _dropSolverType.Items.Add("Direct control point");
             _dropSolverType.Items.Add("Direct Greville");
-            _dropSolverType.Items.Add("Python Port (Legacy)");
-            _dropSolverType.Items.Add("Weighted / Relaxed");
+            _dropSolverType.Items.Add("Python port (legacy)");
+            _dropSolverType.Items.Add("Weighted / relaxed");
             _dropSolverType.SelectedIndex = FitSrfToTargetOptions.SolverType;
             _dropSolverType.SelectedIndexChanged += (s, e) => { UpdateAdvancedOptionsVisibility(); OnOptionChanged(s, e); };
 
+            _txtSamplingLength = new TextBox { Text = FitSrfToTargetOptions.SamplingLength.ToString("G"), Width = 80 };
+            _txtSamplingLength.TextChanged += OnToleranceTextChanged;
+
             _dropSamplingMode = new DropDown();
             _dropSamplingMode.Items.Add("Distributed");
-            _dropSamplingMode.Items.Add("NearestPoint");
+            _dropSamplingMode.Items.Add("Nearest point");
             _dropSamplingMode.SelectedIndex = FitSrfToTargetOptions.SamplingMode;
             _dropSamplingMode.SelectedIndexChanged += OnOptionChanged;
 
             _dropWeightCurve = new DropDown();
             _dropWeightCurve.Items.Add("Linear");
             _dropWeightCurve.Items.Add("Hyperbolic");
+            _dropWeightCurve.Items.Add("Gaussian");
             _dropWeightCurve.SelectedIndex = FitSrfToTargetOptions.WeightCurve;
             _dropWeightCurve.SelectedIndexChanged += OnOptionChanged;
 
@@ -130,7 +143,7 @@ namespace CADacombs.Commands.Modeling
             _dropOutputLayer = new DropDown();
             _dropOutputLayer.Items.Add("Input");
             _dropOutputLayer.Items.Add("Current");
-            _dropOutputLayer.Items.Add("TargetObject");
+            _dropOutputLayer.Items.Add("Target object");
             _dropOutputLayer.SelectedIndex = FitSrfToTargetOptions.OutputLayer;
             _dropOutputLayer.SelectedIndexChanged += (s, e) => 
             {
@@ -167,7 +180,19 @@ namespace CADacombs.Commands.Modeling
             _progressBar = new ProgressBar { MinValue = 0, MaxValue = 1, Value = 0, Visible = false, Height = 10 };
 
             _btnPreview = new Button { Text = "Preview", Width = 75, Enabled = false };
-            _btnPreview.Click += (s, e) => { /* Preview Logic Placeholder */ };
+            _btnPreview.Click += (s, e) => 
+            {
+                if (_isComputing)
+                {
+                    _cancelRequested = true;
+                    _btnPreview.Text = "Stopping...";
+                    _btnPreview.Enabled = false;
+                }
+                else
+                {
+                    UpdatePreview(false);
+                }
+            };
 
             _btnOk = new Button { Text = "OK", Width = 75 };
             _btnOk.Click += (s, e) => { Action = DrapeDialogAction.Ok; Close(); };
@@ -200,25 +225,28 @@ namespace CADacombs.Commands.Modeling
                 Orientation = Orientation.Horizontal, 
                 Spacing = 10, 
                 VerticalContentAlignment = VerticalAlignment.Center, 
-                Items = { new Label { Text = "Starting Surface", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, _btnAddRemSrf, _btnReselSrf } 
+                Items = { new Label { Text = "Starting surface", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, _btnAddRemSrf, _btnReselSrf } 
             });
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            layout.AddRow(new Label { Text = "Solver Options", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
+            layout.AddRow(new Label { Text = "Solver options", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var tableSolver = new TableLayout { Spacing = new Size(10, 5) };
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Mapping Dir:", VerticalAlignment = VerticalAlignment.Center }, _dropMappingDirection, null));
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Solver Type:", VerticalAlignment = VerticalAlignment.Center }, _dropSolverType, null));
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Sampling Mode:", VerticalAlignment = VerticalAlignment.Center }, _dropSamplingMode, null));
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Weight Curve:", VerticalAlignment = VerticalAlignment.Center }, _dropWeightCurve, null));
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Domain %:", VerticalAlignment = VerticalAlignment.Center }, _stepPercentDomain, null));
+            var mappingStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { _dropMappingDirection, _chkFlipDirection } };
+            
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Mapping dir:", VerticalAlignment = VerticalAlignment.Center }, mappingStack, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Solver type:", VerticalAlignment = VerticalAlignment.Center }, _dropSolverType, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Sampling len:", VerticalAlignment = VerticalAlignment.Center }, _txtSamplingLength, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Sampling mode:", VerticalAlignment = VerticalAlignment.Center }, _dropSamplingMode, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Weight curve:", VerticalAlignment = VerticalAlignment.Center }, _dropWeightCurve, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Domain %:", VerticalAlignment = VerticalAlignment.Center }, _stepPercentDomain, new Panel()));
             layout.AddRow(tableSolver);
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             
             var tableGen = new TableLayout { Spacing = new Size(10, 5) };
-            tableGen.Rows.Add(new TableRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, _txtTolerance, null));
-            tableGen.Rows.Add(new TableRow(new Label { Text = "Timeout (s):", VerticalAlignment = VerticalAlignment.Center }, _stepTimeout, null));
-            tableGen.Rows.Add(new TableRow(new Label { Text = "Output layer:", VerticalAlignment = VerticalAlignment.Center }, _dropOutputLayer, null));
+            tableGen.Rows.Add(new TableRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, _txtTolerance, new Panel()));
+            tableGen.Rows.Add(new TableRow(new Label { Text = "Timeout (s):", VerticalAlignment = VerticalAlignment.Center }, _stepTimeout, new Panel()));
+            tableGen.Rows.Add(new TableRow(new Label { Text = "Output layer:", VerticalAlignment = VerticalAlignment.Center }, _dropOutputLayer, new Panel()));
             layout.AddRow(tableGen);
 
             layout.AddRow(_chkDeleteInput);
@@ -234,23 +262,28 @@ namespace CADacombs.Commands.Modeling
             
             layout.AddRow(_progressBar);
             layout.AddRow(new StackLayout { Orientation = Orientation.Vertical, Spacing = 5, Items = { _lblProcessedCount, _lblMaxDev } });
-            layout.AddRow(new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { _btnPreview, new Panel{Width=20}, _btnOk, _btnCancel } });
+            
+            var previewButtonsStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { _btnPreview, new Panel { Size = new Size(20, -1) }, _btnOk, _btnCancel } };
+            layout.AddRow(previewButtonsStack);
 
             Content = layout;
         }
 
         private void UpdateAdvancedOptionsVisibility()
         {
-            // Only show Sampling Mode, Weight Curve, and Domain % for solvers 2 (Python) and 3 (Weighted/Relaxed)
             bool isAdvanced = _dropSolverType.SelectedIndex >= 2;
+            _txtSamplingLength.Enabled = isAdvanced;
             _dropSamplingMode.Enabled = isAdvanced;
             _dropWeightCurve.Enabled = isAdvanced;
             _stepPercentDomain.Enabled = isAdvanced;
+            
+            _chkFlipDirection.Enabled = _dropMappingDirection.SelectedIndex == 1; 
         }
 
         private void OnOptionChanged(object sender, EventArgs e)
         {
             FitSrfToTargetOptions.MappingDirection = _dropMappingDirection.SelectedIndex;
+            FitSrfToTargetOptions.FlipDirection = _chkFlipDirection.Checked ?? false;
             FitSrfToTargetOptions.SolverType = _dropSolverType.SelectedIndex;
             FitSrfToTargetOptions.SamplingMode = _dropSamplingMode.SelectedIndex;
             FitSrfToTargetOptions.WeightCurve = _dropWeightCurve.SelectedIndex;
@@ -259,11 +292,21 @@ namespace CADacombs.Commands.Modeling
             UpdatePreview(true);
         }
 
-        private void OnToleranceTextChanged(object sender, EventArgs e) { /* Identical to DrapeDialog */ }
-        private void OnTypingTimerElapsed(object sender, EventArgs e) { /* Identical to DrapeDialog */ }
+        private void OnToleranceTextChanged(object sender, EventArgs e)
+        {
+            if (_isUpdatingTextProgrammatically) return;
+            
+            SetPreviewRequired("Waiting for input...");
+            
+            _typingTimer.Stop();
+            _typingTimer.Start();
+        }
 
-        // Cache to prevent recalculating if the user clicks around the UI without changing solver parameters
-        private Dictionary<string, (List<NurbsSurface>, List<string>, double)> _previewCache = new Dictionary<string, (List<NurbsSurface>, List<string>, double)>();
+        private void OnTypingTimerElapsed(object sender, EventArgs e)
+        {
+            _typingTimer.Stop();
+            Application.Instance.AsyncInvoke(() => UpdatePreview(true));
+        }
 
         private void SetPreviewRequired(string message)
         {
@@ -280,7 +323,7 @@ namespace CADacombs.Commands.Modeling
             if (ParentWindow != null) this.Size = new Size(this.Width, -1);
         }
 
-        private void ClearPreviewPending(int processedCount, double maxDev)
+        private void ClearPreviewPending(int expectedCount, int missCount, double maxDev)
         {
             _previewPending = false;
             _btnPreview.Enabled = false;
@@ -288,7 +331,15 @@ namespace CADacombs.Commands.Modeling
             _btnPreview.TextColor = SystemColors.ControlText;
             _btnPreview.Font = new Eto.Drawing.Font(SystemFont.Default, _btnPreview.Font.Size);
 
-            _lblProcessedCount.Text = $"Processed {processedCount} surface(s).";
+            // Handle the Total Miss UI cleanly
+            if (missCount == expectedCount && expectedCount > 0)
+            {
+                _lblProcessedCount.Text = "The starting surface completely misses the targets.";
+                _lblMaxDev.Text = "";
+                return;
+            }
+
+            _lblProcessedCount.Text = $"Processed {expectedCount - missCount} surface(s).";
 
             int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
             _lblMaxDev.Text = $"Max. deviation from target(s): {FormatUtils.FormatDistance(maxDev, prec)}";
@@ -347,7 +398,7 @@ namespace CADacombs.Commands.Modeling
             _conduit.PreviewColors = colors;
         }
 
-        private void UpdatePreview(bool autoRun = true)
+        private async void UpdatePreview(bool autoRun = true)
         {
             if (_targetRefs == null || _targetRefs.Length == 0) return;
             
@@ -376,6 +427,20 @@ namespace CADacombs.Commands.Modeling
                 _txtTolerance.BackgroundColor = Colors.LightPink;
                 allValid = false;
             }
+
+            if (double.TryParse(_txtSamplingLength.Text, out double sLen))
+            {
+                if (sLen <= 0) sLen = 2.0;
+                
+                FitSrfToTargetOptions.SamplingLength = sLen;
+                _txtSamplingLength.Text = sLen.ToString("G");
+                _txtSamplingLength.BackgroundColor = Colors.White;
+            }
+            else
+            {
+                _txtSamplingLength.BackgroundColor = Colors.LightPink;
+                allValid = false;
+            }
             
             _isUpdatingTextProgrammatically = false;
 
@@ -386,13 +451,8 @@ namespace CADacombs.Commands.Modeling
             }
                 
             FitSrfToTargetOptions.SolverTimeout = _stepTimeout.Value;
-            FitSrfToTargetOptions.MappingDirection = _dropMappingDirection.SelectedIndex;
-            FitSrfToTargetOptions.SolverType = _dropSolverType.SelectedIndex;
-            FitSrfToTargetOptions.SamplingMode = _dropSamplingMode.SelectedIndex;
-            FitSrfToTargetOptions.WeightCurve = _dropWeightCurve.SelectedIndex;
-            FitSrfToTargetOptions.PercentOfDomain = _stepPercentDomain.Value;
 
-            string cacheKey = $"{FitSrfToTargetOptions.MappingDirection}_{FitSrfToTargetOptions.SolverType}_{FitSrfToTargetOptions.Tolerance}_{FitSrfToTargetOptions.SolverTimeout}_{FitSrfToTargetOptions.SamplingMode}_{FitSrfToTargetOptions.WeightCurve}_{FitSrfToTargetOptions.PercentOfDomain}";
+            string cacheKey = $"{FitSrfToTargetOptions.MappingDirection}_{FitSrfToTargetOptions.FlipDirection}_{FitSrfToTargetOptions.SolverType}_{FitSrfToTargetOptions.Tolerance}_{FitSrfToTargetOptions.SolverTimeout}_{FitSrfToTargetOptions.SamplingLength}_{FitSrfToTargetOptions.SamplingMode}_{FitSrfToTargetOptions.WeightCurve}_{FitSrfToTargetOptions.PercentOfDomain}";
 
             int expectedCount = _startingSrfRefs.Count;
 
@@ -402,7 +462,8 @@ namespace CADacombs.Commands.Modeling
                 _conduit.PreviewSurfaces = ResultSurfaces;
                 _conduit.PreviewBreps = ResultSurfaces != null ? ResultSurfaces.Select(s => s?.ToBrep()).ToList() : new List<Brep>();
                 
-                ClearPreviewPending(expectedCount, cachedData.Item3);
+                int mCount = ResultSurfaces.Count(s => s == null);
+                ClearPreviewPending(expectedCount, mCount, cachedData.Item3);
 
                 foreach (var msg in cachedData.Item2)
                 {
@@ -427,27 +488,51 @@ namespace CADacombs.Commands.Modeling
 
                 Action progressCallback = delegate 
                 { 
-                    _progressBar.Value++; 
-                    RhinoApp.Wait(); 
+                    Application.Instance.AsyncInvoke(() => {
+                        if (_progressBar != null) _progressBar.Value++; 
+                    });
                 };
 
                 Func<bool> checkCancel = delegate
                 {
-                    RhinoApp.Wait();
                     return _cancelRequested;
                 };
 
+                var tBreps = new List<Brep>();
+                var tMeshes = new List<Mesh>();
+                foreach (var r in _targetRefs)
+                {
+                    var geom = r.Geometry();
+                    if (geom is SubD subD) { var lm = Mesh.CreateFromSubD(subD, 3); if (lm != null) tMeshes.Add(lm); else { var pb = subD.ToBrep(new SubDToBrepOptions()); if (pb != null) tBreps.Add(pb); } }
+                    else if (geom is Brep b) tBreps.Add(b);
+                    else if (geom is Mesh m) tMeshes.Add(m);
+                }
+
+                var startSrfs = new List<NurbsSurface>();
+                foreach (var r in _startingSrfRefs)
+                {
+                    Surface srf = r.Surface();
+                    if (srf == null && r.Brep()?.Faces.Count == 1) srf = r.Brep().Faces[0].UnderlyingSurface();
+                    startSrfs.Add(srf?.ToNurbsSurface());
+                }
+
+                double docTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+
                 try
                 {
-                    List<string> messages;
-                    double maxDev;
+                    List<string> messages = null;
+                    double maxDev = 0;
 
-                    ResultSurfaces = FitSrfToTargetLogic.ComputeFitSurfaces(RhinoDoc.ActiveDoc, _targetRefs, _startingSrfRefs, out messages, out maxDev, progressCallback, checkCancel);
+                    await Task.Run(() => 
+                    {
+                        ResultSurfaces = FitSrfToTargetLogic.ComputeFitSurfacesCore(tBreps, tMeshes, startSrfs, docTol, out messages, out maxDev, progressCallback, checkCancel);
+                    });
                     
                     _conduit.PreviewSurfaces = ResultSurfaces;
                     _conduit.PreviewBreps = ResultSurfaces != null ? ResultSurfaces.Select(s => s?.ToBrep()).ToList() : new List<Brep>();
 
-                    ClearPreviewPending(expectedCount, maxDev);
+                    int mCount = ResultSurfaces.Count(s => s == null);
+                    ClearPreviewPending(expectedCount, mCount, maxDev);
 
                     foreach (var msg in messages)
                     {
