@@ -6,6 +6,7 @@ using Rhino.Commands;
 using Rhino.DocObjects;
 using Rhino.Geometry;
 using CADacombs.Core;
+using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Modeling
 {
@@ -27,12 +28,14 @@ namespace CADacombs.Commands.Modeling
             return (_escapeTracker != null && _escapeTracker.IsCanceled) || (_cancelToken?.Invoke() == true);
         }
 
-        public static void BakeResults(RhinoDoc doc, List<NurbsSurface> results, List<ObjRef> startingSrfRefs, ObjRef[] targetRefs)
+        public static void BakeResults(RhinoDoc doc, List<ProjectionResult> results, List<ObjRef> startingSrfRefs, ObjRef[] targetRefs)
         {
+            var attrRed = new ObjectAttributes { ObjectColor = System.Drawing.Color.Red, ColorSource = ObjectColorSource.ColorFromObject };
+
             for (int i = 0; i < results.Count; i++)
             {
-                var ns = results[i];
-                if (ns == null) continue;
+                if (results[i] == null || results[i].Surface == null) continue;
+                var ns = results[i].Surface;
 
                 bool doReplace = FitSrfToTargetOptions.DeleteStartingSrf && startingSrfRefs != null && i < startingSrfRefs.Count;
 
@@ -88,6 +91,24 @@ namespace CADacombs.Commands.Modeling
 
                     doc.Objects.AddSurface(ns, attr);
                 }
+
+                if (FitSrfToTargetOptions.AddErrorLines && results[i].ErrorLines != null && results[i].ErrorLines.Count > 0)
+                {
+                    var toBake = results[i].ErrorLines.Where(l => l.Length > FitSrfToTargetOptions.Tolerance).Take(100).ToList();
+                    foreach (var l in toBake) doc.Objects.AddLine(l, attrRed);
+                    
+                    if (results[i].MaxErrorLine.IsValid && results[i].MaxDeviation > FitSrfToTargetOptions.Tolerance)
+                    {
+                        int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+                        string label = $"Max: {FormatUtils.FormatDistance(results[i].MaxDeviation, prec)}";
+                        var dot = new TextDot(label, results[i].MaxErrorLine.PointAt(0.5));
+                        doc.Objects.AddTextDot(dot, attrRed);
+                    }
+                    if (toBake.Count == 100 && results[i].ErrorLines.Count > 100)
+                    {
+                        RhinoApp.WriteLine($"Only the top 100 error lines out of {results[i].ErrorLines.Count} were added to the document.");
+                    }
+                }
             }
             doc.Views.Redraw();
         }
@@ -113,7 +134,7 @@ namespace CADacombs.Commands.Modeling
                 startSrfs.Add(srf?.ToNurbsSurface());
             }
 
-            List<NurbsSurface> results;
+            List<ProjectionResult> results;
             List<string> messages;
 
             try
@@ -136,19 +157,19 @@ namespace CADacombs.Commands.Modeling
             return Result.Success;
         }
 
-        public static List<NurbsSurface> ComputeFitSurfacesCore(List<Brep> targetBreps, List<Mesh> targetMeshes, List<NurbsSurface> startingSrfs, double docTol, out List<string> messages, out double maxDeviation, Action progressCallback, Func<bool> cancelToken)
+        public static List<ProjectionResult> ComputeFitSurfacesCore(List<Brep> targetBreps, List<Mesh> targetMeshes, List<NurbsSurface> startingSrfs, double docTol, out List<string> messages, out double maxDeviation, Action<SolverProgress> progressCallback, Func<bool> cancelToken)
         {
             _cancelToken = cancelToken;
             messages = new List<string>();
             maxDeviation = 0.0;
-            var outSurfaces = new List<NurbsSurface>();
+            var outResults = new List<ProjectionResult>();
 
             using (_escapeTracker = new EscapeTracker())
             {
                 if (targetBreps.Count == 0 && targetMeshes.Count == 0)
                 {
                     messages.Add("No valid target geometry could be extracted.");
-                    return outSurfaces;
+                    return outResults;
                 }
 
                 int totalSurfaces = startingSrfs.Count;
@@ -161,15 +182,15 @@ namespace CADacombs.Commands.Modeling
                     NurbsSurface nsWIP = startingSrfs[i];
                     if (nsWIP == null) 
                     {
-                        outSurfaces.Add(null);
+                        outResults.Add(null);
                         continue;
                     }
 
-                    NurbsSurface nsOut = null;
                     ProjectionResult res = null;
-
                     int solverType = FitSrfToTargetOptions.SolverType;
                     int mappingDirection = FitSrfToTargetOptions.MappingDirection;
+                    
+                    bool effectiveConstrain1D = FitSrfToTargetOptions.Constrain1D && (mappingDirection == 1);
 
                     if (solverType == 0 || solverType == 1)
                     {
@@ -190,43 +211,51 @@ namespace CADacombs.Commands.Modeling
                         
                         if (!hitAnything)
                         {
-                            outSurfaces.Add(null);
+                            outResults.Add(null);
                             totalMisses++;
-                            progressCallback?.Invoke();
+                            progressCallback?.Invoke(null);
                             continue;
                         }
 
                         if (solverType == 0)
-                            res = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP, FitSrfToTargetOptions.Tolerance);
+                            res = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, progressCallback);
                         else
-                            res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate);
+                            res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
                     }
                     else if (solverType == 2)
                     {
-                        res = ProjectionMath.FitPythonLegacy(nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate);
+                        res = ProjectionMath.FitWeightedRelaxed(nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
                     }
                     else if (solverType == 3)
                     {
-                        res = ProjectionMath.FitWeightedRelaxed(nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate);
+                        res = ProjectionMath.FitGlobalLeastSquares(nsWIP, targetBreps, targetMeshes, effectiveConstrain1D, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
+                    }
+                    else if (solverType == 4)
+                    {
+                        double stiffness = Math.Pow(10, FitSrfToTargetOptions.EnergyStiffnessExponent);
+                        res = ProjectionMath.FitEnergyMinimization(nsWIP, targetBreps, targetMeshes, stiffness, effectiveConstrain1D, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
                     }
 
                     if (res != null)
                     {
                         if (!res.Converged && res.Iterations == 0) 
                         {
-                            outSurfaces.Add(null);
+                            outResults.Add(null);
                             totalMisses++;
-                            progressCallback?.Invoke();
+                            progressCallback?.Invoke(null);
                             continue;
                         }
 
-                        nsOut = res.Surface;
                         maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
                         if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
+                        outResults.Add(res);
+                    }
+                    else
+                    {
+                        outResults.Add(null);
                     }
 
-                    outSurfaces.Add(nsOut);
-                    progressCallback?.Invoke();
+                    progressCallback?.Invoke(null); 
                 }
 
                 if (totalMisses > 0)
@@ -237,7 +266,7 @@ namespace CADacombs.Commands.Modeling
                         messages.Add($"{totalMisses} of {totalSurfaces} starting surfaces completely miss the targets.");
                 }
 
-                return outSurfaces;
+                return outResults;
             }
         }
 

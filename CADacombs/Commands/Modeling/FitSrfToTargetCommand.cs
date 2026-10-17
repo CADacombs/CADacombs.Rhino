@@ -30,7 +30,6 @@ namespace CADacombs.Commands.Modeling
                 FitSrfToTargetOptions.LastDocSerialNumber = doc.RuntimeSerialNumber;
             }
 
-            // 1. Select Starting Surfaces (Surfaces to deform) First
             var goSrf = new GetObject();
             goSrf.SetCommandPrompt("Select surfaces to deform (starting surfaces)");
             goSrf.GeometryFilter = ObjectType.Surface;
@@ -42,12 +41,11 @@ namespace CADacombs.Commands.Modeling
 
             var startingSrfRefs = goSrf.Objects().ToList();
 
-            // 2. Select Targets Second
             var goTargets = new GetObject();
             goTargets.SetCommandPrompt("Select target surfaces, polysurfaces, SubDs and meshes");
             goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
             goTargets.AcceptNumber(false, false);
-            goTargets.DisablePreSelect(); // Prevent accidental re-selection of starting surfaces
+            goTargets.DisablePreSelect(); 
             goTargets.GetMultiple(1, 0);
 
             if (goTargets.CommandResult() != Result.Success)
@@ -58,7 +56,6 @@ namespace CADacombs.Commands.Modeling
             doc.Objects.UnselectAll();
             doc.Views.Redraw();
 
-            // 3. Launch Dialog or Scripted Execution
             if (mode == RunMode.Scripted)
             {
                 return FitSrfToTargetLogic.ExecuteBake(doc, targetRefs.ToArray(), startingSrfRefs);
@@ -76,9 +73,9 @@ namespace CADacombs.Commands.Modeling
 
                 if (dialog.Action == DrapeDialogAction.Ok)
                 {
-                    if (dialog.ResultSurfaces != null && dialog.ResultSurfaces.Count > 0)
+                    if (dialog.Results != null && dialog.Results.Count > 0)
                     {
-                        FitSrfToTargetLogic.BakeResults(doc, dialog.ResultSurfaces, startingSrfRefs, targetRefs.ToArray());
+                        FitSrfToTargetLogic.BakeResults(doc, dialog.Results, startingSrfRefs, targetRefs.ToArray());
                     }
                     break;
                 }

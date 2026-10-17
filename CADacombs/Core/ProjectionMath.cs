@@ -15,12 +15,127 @@ namespace CADacombs.Core
         public double MaxDeviation { get; set; }
         public bool Converged { get; set; }
         public string Message { get; set; }
+        public List<Line> ErrorLines { get; set; } = new List<Line>();
+        public Line MaxErrorLine { get; set; } = Line.Unset;
+    }
+
+    public class SolverProgress
+    {
+        public double ElapsedSeconds { get; set; }
+        public double TimeoutSeconds { get; set; }
+        public double CurrentError { get; set; }
+        public double InitialError { get; set; }
+        public double Tolerance { get; set; }
+    }
+
+    public static class NurbsMatrixMath
+    {
+        public static double[] EvaluateBasisVector(NurbsSurface ns, double u, double v)
+        {
+            int totalCps = ns.Points.CountU * ns.Points.CountV;
+            double[] basisVals = new double[totalCps];
+            
+            var dummySrf = ns.Duplicate() as NurbsSurface;
+            for(int i = 0; i < dummySrf.Points.CountU; i++)
+                for(int j = 0; j < dummySrf.Points.CountV; j++)
+                    dummySrf.Points.SetPoint(i, j, 0, 0, 0, 1.0); 
+
+            Point3d ptZero = dummySrf.PointAt(u, v); 
+            double baseZ = ptZero.Z;
+
+            int idx = 0;
+            for (int i = 0; i < ns.Points.CountU; i++)
+            {
+                for (int j = 0; j < ns.Points.CountV; j++)
+                {
+                    dummySrf.Points.SetPoint(i, j, 0, 0, 1.0, 1.0);
+                    Point3d ptOne = dummySrf.PointAt(u, v);
+                    basisVals[idx] = ptOne.Z - baseZ;
+                    
+                    dummySrf.Points.SetPoint(i, j, 0, 0, 0, 1.0);
+                    idx++;
+                }
+            }
+            return basisVals;
+        }
+
+        public static Matrix BuildThinPlateSplineStiffnessMatrix(int countU, int countV, double lambda)
+        {
+            int n = countU * countV;
+            Matrix L = new Matrix(n, n);
+            
+            for (int u = 0; u < countU; u++)
+            {
+                for (int v = 0; v < countV; v++)
+                {
+                    int row = u * countV + v;
+                    L[row, row] = 4 * lambda;
+
+                    if (u > 0) L[row, (u - 1) * countV + v] = -1 * lambda;
+                    if (u < countU - 1) L[row, (u + 1) * countV + v] = -1 * lambda;
+                    if (v > 0) L[row, u * countV + (v - 1)] = -1 * lambda;
+                    if (v < countV - 1) L[row, u * countV + (v + 1)] = -1 * lambda;
+                }
+            }
+            return L;
+        }
     }
 
     public static class ProjectionMath
     {
-        public static ProjectionResult FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null)
+        // Universal Truth Standard: Replicates _PointDeviation using the Render Mesh and strictly measures 3D Closest Point.
+        public static bool MeasureTrueDeviation(NurbsSurface ns, List<Brep> breps, List<Mesh> meshes, out double maxDev, out List<Line> errLines)
         {
+            maxDev = 0.0;
+            errLines = new List<Line>();
+            
+            if ((breps == null || breps.Count == 0) && (meshes == null || meshes.Count == 0)) return false;
+
+            var srfMesh = Mesh.CreateFromSurface(ns, MeshingParameters.FastRenderMesh);
+            if (srfMesh == null) return false;
+
+            foreach (var pt in srfMesh.Vertices)
+            {
+                Point3d sPt = new Point3d(pt);
+                Point3d? closestPt = null;
+                double minDist = double.MaxValue;
+
+                foreach (var m in meshes)
+                {
+                    var cPt = m.ClosestPoint(sPt);
+                    double dist = sPt.DistanceTo(cPt);
+                    if (dist < minDist) { minDist = dist; closestPt = cPt; }
+                }
+                foreach (var b in breps)
+                {
+                    var cPt = b.ClosestPoint(sPt);
+                    double dist = sPt.DistanceTo(cPt);
+                    if (dist < minDist) { minDist = dist; closestPt = cPt; }
+                }
+
+                if (closestPt.HasValue)
+                {
+                    double dist = sPt.DistanceTo(closestPt.Value);
+                    if (dist > maxDev) maxDev = dist;
+                    errLines.Add(new Line(sPt, closestPt.Value));
+                }
+            }
+            errLines = errLines.OrderByDescending(l => l.Length).ToList();
+            return true;
+        }
+
+        // Backward compatibility overload for ccDrape
+        public static ProjectionResult FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null, Action<SolverProgress> progress = null)
+        {
+            return FitDirectGreville(ptsTarget, nsIn, null, null, fTolerance, timeoutSecs, checkCancel, progress);
+        }
+
+        public static ProjectionResult FitDirectGreville(Point3d?[,] ptsTarget, NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null, Action<SolverProgress> progress = null)
+        {
+            bool hasTargets = false;
+            foreach (var pt in ptsTarget) { if (pt.HasValue) { hasTargets = true; break; } }
+            if (!hasTargets) return new ProjectionResult { Converged = false, Iterations = 0, Message = "The starting surface completely misses the targets." };
+
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = nsIn.Points.CountU;
             int countV = nsIn.Points.CountV;
@@ -28,7 +143,7 @@ namespace CADacombs.Core
             var sw = System.Diagnostics.Stopwatch.StartNew();
             int iterations = 0;
             double maxDev = 0.0;
-            bool converged = false;
+            double initialDev = -1;
 
             for (int u = 0; u < countU; u++)
             {
@@ -39,6 +154,8 @@ namespace CADacombs.Core
                     Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
                     Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
                     Vector3d vect = ptsTarget[u, v].Value - ptGr;
+
+                    if (vect.Length > initialDev) initialDev = vect.Length;
 
                     if (vect.Length > fTolerance)
                     {
@@ -82,22 +199,37 @@ namespace CADacombs.Core
                     }
                 }
 
-                if (!bTransPts)
-                {
-                    converged = true;
-                    break;
-                }
+                progress?.Invoke(new SolverProgress { ElapsedSeconds = sw.Elapsed.TotalSeconds, TimeoutSeconds = timeoutSecs, CurrentError = maxDev, InitialError = initialDev, Tolerance = fTolerance });
+
+                if (!bTransPts) break;
             }
             sw.Stop();
 
-            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
-            string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
-
-            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. Greville point deviation from target(s): {maxDevStr}";
-            if (!converged && maxDev > fTolerance)
+            var errLines = new List<Line>();
+            for (int u = 0; u < countU; u++)
             {
-                msg += " <- Out of tolerance";
+                for (int v = 0; v < countV; v++)
+                {
+                    if (ptsTarget[u, v].HasValue)
+                    {
+                        Point2d uv = nsOut.Points.GetGrevillePoint(u, v);
+                        Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
+                        errLines.Add(new Line(ptGr, ptsTarget[u, v].Value));
+                    }
+                }
             }
+            errLines = errLines.OrderByDescending(l => l.Length).ToList();
+
+            // Run Universal Truth Check if targets are provided (Fallback if ccDrape)
+            if (MeasureTrueDeviation(nsOut, breps, meshes, out double finalMaxDev, out var finalErrLines))
+            {
+                maxDev = finalMaxDev;
+                errLines = finalErrLines;
+            }
+
+            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max deviation from target(s): {FormatUtils.FormatDistance(maxDev, prec)}";
+            if (maxDev > fTolerance) msg += " <- Out of tolerance";
 
             return new ProjectionResult
             {
@@ -105,13 +237,25 @@ namespace CADacombs.Core
                 Iterations = iterations,
                 ElapsedSeconds = sw.Elapsed.TotalSeconds,
                 MaxDeviation = maxDev,
-                Converged = converged,
-                Message = msg
+                Converged = maxDev <= fTolerance,
+                Message = msg,
+                ErrorLines = errLines,
+                MaxErrorLine = errLines.FirstOrDefault()
             };
         }
 
-        public static ProjectionResult FitDirectControlPoints(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance)
+        // Backward compatibility overload for ccDrape
+        public static ProjectionResult FitDirectControlPoints(Point3d?[,] ptsTarget, NurbsSurface nsIn, double fTolerance, Action<SolverProgress> progress = null)
         {
+            return FitDirectControlPoints(ptsTarget, nsIn, null, null, fTolerance, progress);
+        }
+
+        public static ProjectionResult FitDirectControlPoints(Point3d?[,] ptsTarget, NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double fTolerance, Action<SolverProgress> progress = null)
+        {
+            bool hasTargets = false;
+            foreach (var pt in ptsTarget) { if (pt.HasValue) { hasTargets = true; break; } }
+            if (!hasTargets) return new ProjectionResult { Converged = false, Iterations = 0, Message = "The starting surface completely misses the targets." };
+
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int countU = nsIn.Points.CountU;
@@ -129,9 +273,9 @@ namespace CADacombs.Core
                     }
                 }
             }
-            sw.Stop();
 
             double maxDev = 0.0;
+            var errLines = new List<Line>();
             for (int u = 0; u < countU; u++)
             {
                 for (int v = 0; v < countV; v++)
@@ -142,18 +286,24 @@ namespace CADacombs.Core
                         Point3d ptGr = nsOut.PointAt(uv.X, uv.Y);
                         double dist = ptGr.DistanceTo(ptsTarget[u, v].Value);
                         if (dist > maxDev) maxDev = dist;
+                        errLines.Add(new Line(ptGr, ptsTarget[u, v].Value));
                     }
                 }
             }
+            sw.Stop();
+            errLines = errLines.OrderByDescending(l => l.Length).ToList();
+
+            // Run Universal Truth Check if targets are provided (Fallback if ccDrape)
+            if (MeasureTrueDeviation(nsOut, breps, meshes, out double finalMaxDev, out var finalErrLines))
+            {
+                maxDev = finalMaxDev;
+                errLines = finalErrLines;
+            }
+
+            progress?.Invoke(new SolverProgress { ElapsedSeconds = sw.Elapsed.TotalSeconds, TimeoutSeconds = sw.Elapsed.TotalSeconds, CurrentError = maxDev, InitialError = maxDev, Tolerance = fTolerance });
 
             int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
-            string maxDevStr = FormatUtils.FormatDistance(maxDev, prec);
-
-            string msg = $"1 iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. Greville point deviation from target(s): {maxDevStr}";
-            if (maxDev > fTolerance)
-            {
-                msg += " <- Out of tolerance";
-            }
+            string msg = $"1 iterations, {sw.Elapsed.TotalSeconds:F3}s, Max deviation from target(s): {FormatUtils.FormatDistance(maxDev, prec)}";
 
             return new ProjectionResult
             {
@@ -162,16 +312,21 @@ namespace CADacombs.Core
                 ElapsedSeconds = sw.Elapsed.TotalSeconds,
                 MaxDeviation = maxDev,
                 Converged = maxDev <= fTolerance,
-                Message = msg 
+                Message = msg,
+                ErrorLines = errLines,
+                MaxErrorLine = errLines.FirstOrDefault()
             };
         }
 
-        public static ProjectionResult FitWeightedRelaxed(NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null)
+        public static ProjectionResult FitWeightedRelaxed(NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null, Action<SolverProgress> progress = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var nsOut = nsIn.Duplicate() as NurbsSurface;
             int iterations = 0;
             double maxDev = double.MaxValue;
+            double initialError = -1;
+            bool strictMode = false;
+            bool fullyConverged = false;
             
             double domU = nsOut.Domain(0).Length;
             double domV = nsOut.Domain(1).Length;
@@ -191,16 +346,9 @@ namespace CADacombs.Core
             int weightCurve = FitSrfToTargetOptions.WeightCurve;
             bool isZAxis = FitSrfToTargetOptions.MappingDirection == 1;
             Vector3d rayDir = FitSrfToTargetOptions.FlipDirection ? Vector3d.ZAxis : -Vector3d.ZAxis; 
+            double safeRetreatDist = Math.Max(fTolerance * 10.0, 1.0);
 
-            // Calculate overall bounding box to set an absolute ceiling/floor for pure raycasting
-            BoundingBox targetBox = BoundingBox.Empty;
-            if (isZAxis)
-            {
-                foreach (var m in meshes) targetBox.Union(m.GetBoundingBox(true));
-                foreach (var b in breps) targetBox.Union(b.GetBoundingBox(true));
-            }
-
-            while (sw.Elapsed.TotalSeconds < timeoutSecs && maxDev > fTolerance)
+            while (sw.Elapsed.TotalSeconds < timeoutSecs && !fullyConverged)
             {
                 if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
                 iterations++;
@@ -209,59 +357,49 @@ namespace CADacombs.Core
                 var sampleUVs = new List<Point2d>();
                 var sampleVectors = new List<Vector3d>();
 
+                // 1. FAST GRID
                 for (int i = 0; i < sampleCountU; i++)
                 {
                     if (sw.Elapsed.TotalSeconds > timeoutSecs) break;
                     
                     for (int j = 0; j < sampleCountV; j++)
                     {
+                        if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
+                        
                         double u = nsOut.Domain(0).ParameterAt((double)i / (sampleCountU - 1));
                         double v = nsOut.Domain(1).ParameterAt((double)j / (sampleCountV - 1));
-                        Point3d sPt = nsOut.PointAt(u, v);
+                        
+                        Point3d sPtWIP = nsOut.PointAt(u, v);
+                        Point3d sPtOriginal = nsIn.PointAt(u, v); 
                         Point3d? closestPt = null;
 
                         if (isZAxis)
                         {
-                            // Guarantee origin is safely outside the targets to prevent passing through geometries
-                            double safeZ = (rayDir.Z < 0) ? Math.Max(sPt.Z + 1.0, targetBox.Max.Z + 10.0) : Math.Min(sPt.Z - 1.0, targetBox.Min.Z - 10.0);
-                            Point3d safePt = new Point3d(sPt.X, sPt.Y, safeZ);
+                            Point3d safePt = sPtOriginal - rayDir * safeRetreatDist;
 
                             var hits = new List<Point3d>();
                             if (breps.Count > 0)
                             {
                                 var bHits = Rhino.Geometry.Intersect.Intersection.ProjectPointsToBreps(breps, new[] { safePt }, rayDir, 0.01);
-                                if (bHits != null) hits.AddRange(bHits.Where(h => (h.Z - safePt.Z) * rayDir.Z >= -1e-5));
+                                if (bHits != null) hits.AddRange(bHits.Where(h => (h.Z - sPtOriginal.Z) * rayDir.Z >= -1e-5));
                             }
                             if (meshes.Count > 0)
                             {
                                 var mHits = Rhino.Geometry.Intersect.Intersection.ProjectPointsToMeshes(meshes, new[] { safePt }, rayDir, 0.01);
-                                if (mHits != null) hits.AddRange(mHits.Where(h => (h.Z - safePt.Z) * rayDir.Z >= -1e-5));
+                                if (mHits != null) hits.AddRange(mHits.Where(h => (h.Z - sPtOriginal.Z) * rayDir.Z >= -1e-5));
                             }
-                            if (hits.Count > 0)
-                            {
-                                closestPt = hits.OrderBy(h => safePt.DistanceTo(h)).First();
-                            }
+                            if (hits.Count > 0) closestPt = hits.OrderBy(h => sPtOriginal.DistanceTo(h)).First();
                         }
                         else 
                         {
                             double minDist = double.MaxValue;
-                            foreach (var mesh in meshes)
-                            {
-                                var mPt = mesh.ClosestPoint(sPt);
-                                double dist = sPt.DistanceTo(mPt);
-                                if (dist < minDist) { minDist = dist; closestPt = mPt; }
-                            }
-                            foreach (var brep in breps)
-                            {
-                                var bPt = brep.ClosestPoint(sPt);
-                                double dist = sPt.DistanceTo(bPt);
-                                if (dist < minDist) { minDist = dist; closestPt = bPt; }
-                            }
+                            foreach (var mesh in meshes) { var mPt = mesh.ClosestPoint(sPtWIP); if (sPtWIP.DistanceTo(mPt) < minDist) { minDist = sPtWIP.DistanceTo(mPt); closestPt = mPt; } }
+                            foreach (var brep in breps) { var bPt = brep.ClosestPoint(sPtWIP); if (sPtWIP.DistanceTo(bPt) < minDist) { minDist = sPtWIP.DistanceTo(bPt); closestPt = bPt; } }
                         }
 
                         if (closestPt.HasValue)
                         {
-                            Vector3d vec = closestPt.Value - sPt;
+                            Vector3d vec = closestPt.Value - sPtWIP;
                             if (vec.Length > maxDev) maxDev = vec.Length;
                             
                             sampleUVs.Add(new Point2d(u, v));
@@ -270,11 +408,45 @@ namespace CADacombs.Core
                     }
                 }
 
-                if (sampleVectors.Count == 0)
+                if (initialError < 0) initialError = maxDev;
+
+                // 2. COARSE-TO-FINE TRANSITION
+                if (maxDev <= fTolerance && !strictMode) 
                 {
-                    if (iterations == 1) iterations = 0; // Flag as total miss
-                    break;
+                    strictMode = true; 
                 }
+
+                if (strictMode)
+                {
+                    if (MeasureTrueDeviation(nsOut, breps, meshes, out double trueMaxDev, out var strictLines))
+                    {
+                        if (trueMaxDev <= fTolerance)
+                        {
+                            maxDev = trueMaxDev;
+                            fullyConverged = true;
+                            break;
+                        }
+                        
+                        foreach (var line in strictLines.Where(l => l.Length > fTolerance).Take(sampleCountU * sampleCountV))
+                        {
+                            if (nsOut.ClosestPoint(line.From, out double u, out double v))
+                            {
+                                sampleUVs.Add(new Point2d(u, v));
+                                sampleVectors.Add(line.To - line.From);
+                                if (line.Length > maxDev) maxDev = line.Length;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (maxDev <= fTolerance) fullyConverged = true;
+                        break;
+                    }
+                }
+
+                if (sampleVectors.Count == 0) break;
+
+                progress?.Invoke(new SolverProgress { ElapsedSeconds = sw.Elapsed.TotalSeconds, TimeoutSeconds = timeoutSecs, CurrentError = maxDev, InitialError = initialError, Tolerance = fTolerance });
 
                 var newCpLocations = new Point3d[nsOut.Points.CountU, nsOut.Points.CountV];
 
@@ -282,6 +454,8 @@ namespace CADacombs.Core
                 {
                     for (int cv = 0; cv < nsOut.Points.CountV; cv++)
                     {
+                        if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
+                        
                         Point2d cpUV = nsOut.Points.GetGrevillePoint(cu, cv);
                         ControlPoint cp = nsOut.Points.GetControlPoint(cu, cv);
                         
@@ -294,17 +468,12 @@ namespace CADacombs.Core
                             double d = Math.Sqrt(distSq);
                             double weight = 0.0;
 
-                            if (weightCurve == 2) 
-                            {
-                                weight = Math.Exp(-distSq / twoSigmaSq);
-                            }
+                            if (weightCurve == 2) weight = Math.Exp(-distSq / twoSigmaSq);
                             else if (d <= L) weight = 1.0;
                             else if (d < R)
                             {
-                                if (weightCurve == 0) 
-                                    weight = 1.0 - (d - L) / (R - L);
-                                else if (weightCurve == 1) 
-                                    weight = 1.0 - (1.0 - L / d) / (1.0 - L / R);
+                                if (weightCurve == 0) weight = 1.0 - (d - L) / (R - L);
+                                else if (weightCurve == 1) weight = 1.0 - (1.0 - L / d) / (1.0 - L / R);
                             }
 
                             if (weight > 0)
@@ -338,313 +507,213 @@ namespace CADacombs.Core
             }
 
             sw.Stop();
+            if (iterations == 0) return new ProjectionResult { Converged = false, Iterations = 0, Message = "The starting surface completely misses the targets." };
+
+            var errLines = new List<Line>();
+            double finalMaxDev = maxDev;
+
+            // Final Universal Truth Check
+            if (MeasureTrueDeviation(nsOut, breps, meshes, out double measuredMaxDev, out var measuredErrLines))
+            {
+                finalMaxDev = measuredMaxDev;
+                errLines = measuredErrLines;
+            }
+
             int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
-            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. deviation from target(s): {FormatUtils.FormatDistance(maxDev, prec)}";
-            if (maxDev > fTolerance && iterations > 0) msg += " <- Out of tolerance";
+            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max deviation from target(s): {FormatUtils.FormatDistance(finalMaxDev, prec)}";
+            if (finalMaxDev > fTolerance) msg += " <- Timed out";
 
             return new ProjectionResult
             {
                 Surface = nsOut,
                 Iterations = iterations,
                 ElapsedSeconds = sw.Elapsed.TotalSeconds,
-                MaxDeviation = maxDev,
-                Converged = maxDev <= fTolerance,
-                Message = iterations == 0 ? null : msg
+                MaxDeviation = finalMaxDev,
+                Converged = finalMaxDev <= fTolerance,
+                Message = msg,
+                ErrorLines = errLines,
+                MaxErrorLine = errLines.FirstOrDefault()
             };
         }
 
-        public static ProjectionResult FitPythonLegacy(NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null)
+        public static ProjectionResult FitGlobalLeastSquares(NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, bool constrain1D, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null, Action<SolverProgress> progress = null)
+        {
+            return FitMatrixSolverCore(nsIn, breps, meshes, fTolerance, timeoutSecs, false, 0.0, constrain1D, checkCancel, progress);
+        }
+
+        public static ProjectionResult FitEnergyMinimization(NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double stiffness, bool constrain1D, double fTolerance, double timeoutSecs, Func<bool> checkCancel = null, Action<SolverProgress> progress = null)
+        {
+            return FitMatrixSolverCore(nsIn, breps, meshes, fTolerance, timeoutSecs, true, stiffness, constrain1D, checkCancel, progress);
+        }
+
+        private static ProjectionResult FitMatrixSolverCore(NurbsSurface nsIn, List<Brep> breps, List<Mesh> meshes, double fTolerance, double timeoutSecs, bool useStiffness, double stiffness, bool constrain1D, Func<bool> checkCancel, Action<SolverProgress> progress)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var nsWIP = nsIn.Duplicate() as NurbsSurface;
+            var nsOut = nsIn.Duplicate() as NurbsSurface;
             
-            nsWIP.SetDomain(0, new Interval(0.0, 1.0));
-            nsWIP.SetDomain(1, new Interval(0.0, 1.0));
-
-            int countU = nsWIP.Points.CountU;
-            int countV = nsWIP.Points.CountV;
+            int countU = nsOut.Points.CountU;
+            int countV = nsOut.Points.CountV;
             int totalCps = countU * countV;
 
-            double sLen = FitSrfToTargetOptions.SamplingLength;
-            var ptsTarget = new List<Point3d>();
-            foreach (var mesh in meshes) 
+            int sampleCountU = countU * 3;
+            int sampleCountV = countV * 3;
+
+            bool isZAxis = FitSrfToTargetOptions.MappingDirection == 1;
+            Vector3d rayDir = FitSrfToTargetOptions.FlipDirection ? Vector3d.ZAxis : -Vector3d.ZAxis; 
+            double safeRetreatDist = Math.Max(fTolerance * 10.0, 1.0);
+
+            var validUVs = new List<Point2d>();
+            var targetPts = new List<Point3d>();
+
+            for (int i = 0; i < sampleCountU; i++)
             {
-                ptsTarget.AddRange(mesh.Vertices.ToPoint3dArray());
-            }
-            foreach (var brep in breps)
-            {
-                var mp = new MeshingParameters(sLen, sLen) { SimplePlanes = false }; 
-                var bMeshes = Mesh.CreateFromBrep(brep, mp);
-                if (bMeshes != null)
+                if (sw.Elapsed.TotalSeconds > timeoutSecs) break;
+
+                for (int j = 0; j < sampleCountV; j++)
                 {
-                    foreach (var bm in bMeshes)
+                    if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
+
+                    double u = nsOut.Domain(0).ParameterAt((double)i / (sampleCountU - 1));
+                    double v = nsOut.Domain(1).ParameterAt((double)j / (sampleCountV - 1));
+                    
+                    Point3d sPtWIP = nsOut.PointAt(u, v);
+                    Point3d sPtOriginal = nsIn.PointAt(u, v); 
+                    Point3d? closestPt = null;
+
+                    if (isZAxis)
                     {
-                        bm.Vertices.CombineIdentical(true, true);
-                        ptsTarget.AddRange(bm.Vertices.ToPoint3dArray());
+                        Point3d safePt = sPtOriginal - rayDir * safeRetreatDist;
+
+                        var hits = new List<Point3d>();
+                        if (breps.Count > 0)
+                        {
+                            var bHits = Rhino.Geometry.Intersect.Intersection.ProjectPointsToBreps(breps, new[] { safePt }, rayDir, 0.01);
+                            if (bHits != null) hits.AddRange(bHits.Where(h => (h.Z - sPtOriginal.Z) * rayDir.Z >= -1e-5));
+                        }
+                        if (meshes.Count > 0)
+                        {
+                            var mHits = Rhino.Geometry.Intersect.Intersection.ProjectPointsToMeshes(meshes, new[] { safePt }, rayDir, 0.01);
+                            if (mHits != null) hits.AddRange(mHits.Where(h => (h.Z - sPtOriginal.Z) * rayDir.Z >= -1e-5));
+                        }
+                        if (hits.Count > 0) closestPt = hits.OrderBy(h => sPtOriginal.DistanceTo(h)).First();
+                    }
+                    else 
+                    {
+                        double minDist = double.MaxValue;
+                        foreach (var mesh in meshes) { var mPt = mesh.ClosestPoint(sPtWIP); if (sPtWIP.DistanceTo(mPt) < minDist) { minDist = sPtWIP.DistanceTo(mPt); closestPt = mPt; } }
+                        foreach (var brep in breps) { var bPt = brep.ClosestPoint(sPtWIP); if (sPtWIP.DistanceTo(bPt) < minDist) { minDist = sPtWIP.DistanceTo(bPt); closestPt = bPt; } }
+                    }
+
+                    if (closestPt.HasValue)
+                    {
+                        validUVs.Add(new Point2d(u, v));
+                        targetPts.Add(closestPt.Value);
                     }
                 }
             }
 
-            // Rapid point decimation using native Rhino functions to prevent hangs
-            ptsTarget = Point3d.CullDuplicates(ptsTarget, 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance).ToList();
-            if (ptsTarget.Count > 10000)
-            {
-                double cullTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance * 10;
-                while (ptsTarget.Count > 10000 && cullTol < 1000.0)
-                {
-                    ptsTarget = Point3d.CullDuplicates(ptsTarget, cullTol).ToList();
-                    cullTol *= 2.0;
-                }
-            }
+            if (validUVs.Count == 0) return new ProjectionResult { Converged = false, Iterations = 0, Message = "The starting surface completely misses the targets." };
 
-            if (ptsTarget.Count == 0)
-            {
-                return new ProjectionResult { Surface = nsWIP, Converged = false, Iterations = 0 };
-            }
-
-            int samplingMode = FitSrfToTargetOptions.SamplingMode;
-            int weightCurve = FitSrfToTargetOptions.WeightCurve;
-            bool isNormalTrans = FitSrfToTargetOptions.MappingDirection == 0; 
+            int m = validUVs.Count;
+            int n = totalCps;
             
-            // Reversing the ray direction for Python Legacy because it projects FROM the target UP to the surface
-            Vector3d rayDir = FitSrfToTargetOptions.FlipDirection ? Vector3d.ZAxis : -Vector3d.ZAxis;
-            Vector3d reverseRayDir = -rayDir;
-            
-            double domLenU = nsWIP.Domain(0).Length;
-            double domLenV = nsWIP.Domain(1).Length;
-            double pct = FitSrfToTargetOptions.PercentOfDomain / 100.0;
-            double uvDistTol_Upr = Math.Min(domLenU * pct, domLenV * pct);
-            double uvDistTol_Lwr = 0.01 * uvDistTol_Upr;
-            
-            bool[] bFreezeCps = new bool[totalCps];
-            int iterations = 0;
-            double maxDev = double.MaxValue;
-            double previousMaxDev = double.MaxValue;
+            progress?.Invoke(new SolverProgress { ElapsedSeconds = sw.Elapsed.TotalSeconds, TimeoutSeconds = timeoutSecs, CurrentError = fTolerance * 10, InitialError = fTolerance * 10, Tolerance = fTolerance });
 
-            Brep wipBrep = null;
-
-            while (sw.Elapsed.TotalSeconds < timeoutSecs)
+            Matrix N = new Matrix(m, n);
+            for (int r = 0; r < m; r++)
             {
                 if (checkCancel?.Invoke() == true) throw new OperationCanceledException();
-                iterations++;
-
-                var uvsTargetProjd = new List<Point2d>();
-                var ptsProjdHit = new List<Point3d>();
-                var dists = new List<double>();
-                var validTargets = new List<Point3d>();
-
-                if (!isNormalTrans) wipBrep = nsWIP.ToBrep();
-
-                foreach (var pt0 in ptsTarget)
+                double[] basisVals = NurbsMatrixMath.EvaluateBasisVector(nsOut, validUVs[r].X, validUVs[r].Y);
+                for (int c = 0; c < n; c++)
                 {
-                    if (sw.Elapsed.TotalSeconds > timeoutSecs) break;
-
-                    if (isNormalTrans) 
-                    {
-                        if (nsWIP.ClosestPoint(pt0, out double u, out double v))
-                        {
-                            Point3d hit = nsWIP.PointAt(u, v);
-                            Vector3d normal = nsWIP.NormalAt(u, v);
-                            Vector3d diff = pt0 - hit;
-                            
-                            double dist = diff.Length;
-                            if (Vector3d.VectorAngle(normal, diff) > Math.PI / 4.0) dist = -dist; 
-
-                            uvsTargetProjd.Add(new Point2d(u, v));
-                            ptsProjdHit.Add(hit);
-                            dists.Add(dist);
-                            validTargets.Add(pt0);
-                        }
-                    }
-                    else 
-                    {
-                        var rayHits = Rhino.Geometry.Intersect.Intersection.ProjectPointsToBreps(new[] { wipBrep }, new[] { pt0 }, reverseRayDir, 0.01);
-                        var validHits = rayHits?.Where(h => (h.Z - pt0.Z) * reverseRayDir.Z >= -1e-5).ToList();
-                        
-                        if (validHits != null && validHits.Count > 0)
-                        {
-                            var hit = validHits.OrderBy(h => pt0.DistanceTo(h)).First();
-                            nsWIP.ClosestPoint(hit, out double u, out double v);
-                            double dist = hit.DistanceTo(pt0);
-                            Vector3d diff = pt0 - hit;
-                            if (Vector3d.VectorAngle(nsWIP.NormalAt(u, v), diff) > Math.PI / 4.0) dist = -dist;
-
-                            uvsTargetProjd.Add(new Point2d(u, v));
-                            ptsProjdHit.Add(hit);
-                            dists.Add(dist);
-                            validTargets.Add(pt0);
-                        }
-                    }
+                    N[r, c] = basisVals[c];
                 }
-
-                if (validTargets.Count == 0)
-                {
-                    if (iterations == 1) iterations = 0; // Flag as total miss
-                    break;
-                }
-                
-                maxDev = 0.0;
-                foreach (var d in dists) { if (Math.Abs(d) > maxDev) maxDev = Math.Abs(d); }
-                
-                if (maxDev <= fTolerance || (iterations > 1 && Math.Abs(previousMaxDev - maxDev) < 0.1 * fTolerance)) break;
-
-                var uvsGreville = new List<Point2d>();
-                var vectsAtGrev = new List<Vector3d>();
-                var ptsCpNs0 = new List<Point3d>();
-
-                for (int u = 0; u < countU; u++)
-                {
-                    for (int v = 0; v < countV; v++)
-                    {
-                        uvsGreville.Add(nsWIP.Points.GetGrevillePoint(u, v));
-                        ptsCpNs0.Add(nsWIP.Points.GetControlPoint(u, v).Location);
-                        
-                        Vector3d normal = nsWIP.NormalAt(uvsGreville.Last().X, uvsGreville.Last().Y);
-                        if (!isNormalTrans)
-                        {
-                            normal = Vector3d.VectorAngle(normal, rayDir) < Math.PI / 2.0 ? rayDir : -rayDir;
-                        }
-                        vectsAtGrev.Add(normal);
-                    }
-                }
-
-                var magnitudes = new double[totalCps];
-
-                for (int iG = 0; iG < totalCps; iG++)
-                {
-                    if (bFreezeCps[iG]) continue;
-
-                    var weightsTsPerG = new List<double>();
-                    var distsWeightedTsPerG = new List<double>();
-                    double nearestDist = double.MaxValue;
-
-                    for (int iT = 0; iT < validTargets.Count; iT++)
-                    {
-                        double distUV = uvsGreville[iG].DistanceTo(uvsTargetProjd[iT]);
-                        if (distUV < nearestDist) nearestDist = distUV;
-
-                        double w = 0.0;
-                        if (distUV <= uvDistTol_Lwr) w = 1.0;
-                        else if (distUV < uvDistTol_Upr)
-                        {
-                            if (weightCurve == 0) 
-                                w = 1.0 - (distUV - uvDistTol_Lwr) / (uvDistTol_Upr - uvDistTol_Lwr);
-                            else if (weightCurve == 1)
-                                w = 1.0 - (1.0 - uvDistTol_Lwr / distUV) / (1.0 - uvDistTol_Lwr / uvDistTol_Upr);
-                            else if (weightCurve == 2)
-                                w = Math.Exp(-(distUV * distUV) / (2.0 * uvDistTol_Upr * uvDistTol_Upr));
-                        }
-
-                        weightsTsPerG.Add(w);
-                        distsWeightedTsPerG.Add(w * dists[iT]);
-                    }
-
-                    double distWeightedNormalized = 0.0;
-
-                    if (samplingMode == 0) 
-                    {
-                        int countPerf = 0;
-                        int idxPerf = -1;
-                        for (int k = 0; k < weightsTsPerG.Count; k++)
-                        {
-                            if (Math.Abs(weightsTsPerG[k] - 1.0) < 1e-6)
-                            {
-                                countPerf++;
-                                idxPerf = k;
-                            }
-                        }
-
-                        if (countPerf == 1)
-                        {
-                            distWeightedNormalized = distsWeightedTsPerG[idxPerf];
-                        }
-                        else
-                        {
-                            double sumW = 0.0;
-                            double sumD = 0.0;
-                            foreach (var w in weightsTsPerG) sumW += w;
-                            foreach (var d in distsWeightedTsPerG) sumD += d;
-                            if (sumW > 0) distWeightedNormalized = sumD / sumW;
-                        }
-                    }
-                    else 
-                    {
-                        double wNearest = 0.0;
-                        if (nearestDist <= uvDistTol_Lwr) wNearest = 1.0;
-                        else if (nearestDist < uvDistTol_Upr)
-                        {
-                            if (weightCurve == 0) wNearest = 1.0 - (nearestDist - uvDistTol_Lwr) / (uvDistTol_Upr - uvDistTol_Lwr);
-                            else if (weightCurve == 1) wNearest = 1.0 - (1.0 - uvDistTol_Lwr / nearestDist) / (1.0 - uvDistTol_Lwr / uvDistTol_Upr);
-                            else if (weightCurve == 2) wNearest = Math.Exp(-(nearestDist * nearestDist) / (2.0 * uvDistTol_Upr * uvDistTol_Upr));
-                        }
-
-                        if (wNearest > 0)
-                        {
-                            var minDists = new List<double>();
-                            for (int iT = 0; iT < validTargets.Count; iT++)
-                            {
-                                if (Math.Abs(uvsGreville[iG].DistanceTo(uvsTargetProjd[iT]) - nearestDist) < 1e-6)
-                                {
-                                    minDists.Add(wNearest * dists[iT]);
-                                }
-                            }
-                            if (minDists.Count > 0)
-                            {
-                                double sD = 0;
-                                foreach (var md in minDists) sD += md;
-                                distWeightedNormalized = sD / minDists.Count;
-                            }
-                        }
-                    }
-
-                    magnitudes[iG] = distWeightedNormalized; 
-                }
-
-                for (int iG = 0; iG < totalCps; iG++)
-                {
-                    for (int iT = 0; iT < validTargets.Count; iT++)
-                    {
-                        if (Math.Abs(uvsGreville[iG].X - uvsTargetProjd[iT].X) < 1e-6 &&
-                            Math.Abs(uvsGreville[iG].Y - uvsTargetProjd[iT].Y) < 1e-6 &&
-                            Math.Abs(dists[iT]) < 1e-6)
-                        {
-                            bFreezeCps[iG] = true;
-                            break;
-                        }
-                    }
-
-                    if (!bFreezeCps[iG])
-                    {
-                        ptsCpNs0[iG] += vectsAtGrev[iG] * magnitudes[iG];
-                    }
-                }
-
-                for (int u = 0; u < countU; u++)
-                {
-                    for (int v = 0; v < countV; v++)
-                    {
-                        var cp = nsWIP.Points.GetControlPoint(u, v);
-                        cp.Location = ptsCpNs0[u * countV + v];
-                        nsWIP.Points.SetControlPoint(u, v, cp);
-                    }
-                }
-
-                previousMaxDev = maxDev;
             }
 
-            sw.Stop();
-            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
-            string msg = $"{iterations} iterations, {sw.Elapsed.TotalSeconds:F3}s, Max. deviation from target(s): {FormatUtils.FormatDistance(maxDev, prec)}";
-            if (maxDev > fTolerance && iterations > 0) msg += " <- Out of tolerance";
+            Matrix Qx = new Matrix(m, 1);
+            Matrix Qy = new Matrix(m, 1);
+            Matrix Qz = new Matrix(m, 1);
+            for (int r = 0; r < m; r++)
+            {
+                Qx[r, 0] = targetPts[r].X;
+                Qy[r, 0] = targetPts[r].Y;
+                Qz[r, 0] = targetPts[r].Z;
+            }
 
+            Matrix NT = new Matrix(n, m);
+            for (int r = 0; r < m; r++)
+            {
+                for (int c = 0; c < n; c++)
+                {
+                    NT[c, r] = N[r, c];
+                }
+            }
+            Matrix NT_N = NT * N;
+
+            if (useStiffness)
+            {
+                Matrix L = NurbsMatrixMath.BuildThinPlateSplineStiffnessMatrix(countU, countV, stiffness);
+                for (int i = 0; i < n; i++)
+                    for (int j = 0; j < n; j++)
+                        NT_N[i, j] += L[i, j];
+            }
+
+            if (!NT_N.Invert(1e-12))
+            {
+                return new ProjectionResult { Converged = false, Iterations = 1, Message = "Matrix math failed: System is singular or under-constrained." };
+            }
+
+            Matrix NT_N_inv_NT = NT_N * NT;
+            Matrix Pz = NT_N_inv_NT * Qz;
+            Matrix Px = null;
+            Matrix Py = null;
+
+            if (!constrain1D)
+            {
+                Px = NT_N_inv_NT * Qx;
+                Py = NT_N_inv_NT * Qy;
+            }
+
+            for (int u = 0; u < countU; u++)
+            {
+                for (int v = 0; v < countV; v++)
+                {
+                    int row = u * countV + v;
+                    ControlPoint cp = nsOut.Points.GetControlPoint(u, v);
+                    
+                    if (constrain1D) cp.Location = new Point3d(cp.Location.X, cp.Location.Y, Pz[row, 0]);
+                    else cp.Location = new Point3d(Px[row, 0], Py[row, 0], Pz[row, 0]);
+                    
+                    nsOut.Points.SetControlPoint(u, v, cp);
+                }
+            }
+            sw.Stop();
+
+            double finalMaxDev = 0.0;
+            var finalErrLines = new List<Line>();
+
+            // Run Universal Truth Check
+            if (MeasureTrueDeviation(nsOut, breps, meshes, out double measuredMaxDev, out var measuredErrLines))
+            {
+                finalMaxDev = measuredMaxDev;
+                finalErrLines = measuredErrLines;
+            }
+
+            progress?.Invoke(new SolverProgress { ElapsedSeconds = sw.Elapsed.TotalSeconds, TimeoutSeconds = sw.Elapsed.TotalSeconds, CurrentError = finalMaxDev, InitialError = finalMaxDev, Tolerance = fTolerance });
+
+            int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
+            string msg = $"Matrix inversion complete, {sw.Elapsed.TotalSeconds:F3}s, Max deviation from target(s): {FormatUtils.FormatDistance(finalMaxDev, prec)}";
+            
             return new ProjectionResult
             {
-                Surface = nsWIP,
-                Iterations = iterations,
+                Surface = nsOut,
+                Iterations = 1,
                 ElapsedSeconds = sw.Elapsed.TotalSeconds,
-                MaxDeviation = maxDev,
-                Converged = maxDev <= fTolerance,
-                Message = iterations == 0 ? null : msg
+                MaxDeviation = finalMaxDev,
+                Converged = finalMaxDev <= fTolerance,
+                Message = msg,
+                ErrorLines = finalErrLines,
+                MaxErrorLine = finalErrLines.FirstOrDefault()
             };
         }
     }
