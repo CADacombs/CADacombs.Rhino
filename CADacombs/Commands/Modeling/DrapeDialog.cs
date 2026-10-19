@@ -64,7 +64,7 @@ namespace CADacombs.Commands.Modeling
             _startingSrfRefs = startingSrfRefs;
             _conduit = conduit;
 
-            Title = "CADacombs Drape / ProjectSrf";
+            Title = "CADacombs Drape";
             Resizable = false;
             AutoSize = true; 
             Padding = new Padding(12);

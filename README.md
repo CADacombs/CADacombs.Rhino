@@ -21,23 +21,35 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 * **Corner Averaging:** Intelligently averages intersecting G1/G2 adjustments at corners so boundaries flow together seamlessly.
 * **NURBS Precision:** The output surface may contain more knot vectors than native `_EdgeSrf` to ensure absolute mathematical compliance with the requested continuity.
 
-#### 2. ccDrape & ccProjectSrf
-`ccDrape` and `ccProjectSrf` are advanced alternatives to Rhino's native `_Drape` and `_Project` commands, utilizing Greville point locations to fit open, degree-3 NURBS surfaces precisely over target Breps, Meshes, and SubDs.
+#### 2. ccDrape
+`ccDrape` is an advanced alternative to Rhino's native `_Drape` command, utilizing iterative elevation algorithms to fit open, degree-3 NURBS surfaces precisely over target Breps, Meshes, and SubDs.
 
 **Key Features:**
-* **Interactive Eto Dialog & CLI:** Features a modern, stateless UI with real-time cached preview updates, robust Add/Remove target toggling, and granular numeric control. Both commands also feature full Command-Line Interface (CLI) support for rapid, macro-friendly execution.
+* **Interactive Eto Dialog & CLI:** Features a modern, stateless UI with real-time cached preview updates, robust Add/Remove target toggling, and granular numeric control. Features full Command-Line Interface (CLI) support for rapid, macro-friendly execution.
 * **Selectable Fit Methods:** Choose between distinct algorithmic solvers depending on the target geometry:
   * **Drape with skirted borders:** Employs an iterative High-to-Low elevation sorting algorithm. Quarantines border control points to ensure absolute zero clipping, ideal for vertical walls and architectural blocks.
   * **Drape with hugging borders:** Modifies the gravity drape to allow border control points to participate in neighbor translations, allowing the edges to hug meshes tighter.
-  * **Project Greville points:** A direct point-relaxation solver that produces smooth, low-tension surfaces. Automatically defaulted to when projecting or draping over a single, continuous surface.
-  * **Project control points:** A fast, direct 1:1 control point projection.
-* **Starting Surface Flexibility:** Automatically generates a starting surface based on the bounding box and span spacing of the target objects (`ccDrape`), or allows you to select your own custom starting surfaces.
+* **Starting Surface Flexibility:** Automatically generates a starting surface based on the bounding box and span spacing of the target objects, or allows you to select your own custom starting surfaces.
 * **Advanced Miss Handling:** Handles "missed" target projections with customizable resolution strategies: fix to the starting surface, use the lowest hit neighbor, or linearly extrapolate from the nearest hits.
 * **Non-Destructive Replacement:** The `Delete input` option uses native UUID replacement, perfectly preserving the original object's `ColorSource`, `ObjectColor`, and layer assignments.
-* **Directional Projection & Flattening:** `ccProjectSrf` enforces strict Z-axis directional projections based on true 3D elevation. `ccDrape` flattens the surface above the target bounding box to guarantee absolute hits, but can be toggled via the `Flatten starting surface` option.
+* **Flattening Options:** Automatically flattens the generated surface above the target bounding box to guarantee absolute hits, but can be toggled via the `Flatten starting surface` option for true 3D elevation drops.
 * **Interruptible Solvers:** Heavy mathematical computations can be safely aborted at any time via the UI's dynamic "Stop" button or the native `Esc` key.
 
-#### 3. ccMatchSrf
+#### 3. ccProjectSrf & ccPullSrf
+`ccProjectSrf` and `ccPullSrf` are powerful surface deformation tools that utilize the unified `ConformSrf` physics engine to conform existing NURBS surfaces to target Breps, Meshes, and SubDs.
+
+**Key Features:**
+* **Interactive Eto Dialog & CLI:** Both commands share a dynamic, stateless UI with pre-configured defaults depending on the command executed. Full Command-Line Interface (CLI) support exposes solver-specific options for headless scripting.
+* **Advanced Solvers:** 
+  * **Direct control point:** A fast, direct 1:1 control point projection.
+  * **Direct Greville:** A direct point-relaxation solver that produces smooth, low-tension surfaces.
+  * **Weighted / relaxed:** A spring-relaxation physics engine with user-defined sampling modes, weight curves (Linear, Hyperbolic, Gaussian), and an automated stagnation check that stops the solver if accuracy fails to improve.
+  * **Global least squares & Energy minimization:** Matrix solvers that evaluate the entire surface as a linked mathematical web, optionally utilizing an explicit stiffness exponent for highly rigid conforms.
+* **Directional Mapping:** Choose to map geometry via closest-point Pull, Project down (-Z), or Project up (+Z).
+* **1D Constraints:** The `Constrain to 1D displacement` option locks lateral control point shifting (X and Y) during Z-axis Matrix projections, causing the solver to act as a strict vertical press and preventing overall surface shrinkage.
+* **Robust Feedback:** Comprehensive command-line reporting details exactly why a solver halted (e.g., "Converged", "Timed out", "Geometrically constrained", or "No improvement").
+
+#### 4. ccMatchSrf
 `ccMatchSrf` is a precise complement to Rhino's native `_MatchSrf`, designed to strictly preserve input knot and control point structures when matching untrimmed surface edges.
 
 **Key Features:**
@@ -51,7 +63,7 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 
 ### Curve and Surface Commands
 
-#### 4. ccEndBulge
+#### 5. ccEndBulge
 `ccEndBulge` is an interactive alternative to Rhino's native `_EndBulge` command, featuring dialog controls instead of graphics window grip translation for both open curves and untrimmed surface edges.
 
 **Key Differences from Native `_EndBulge`**
@@ -82,42 +94,42 @@ A growing collection of NURBS curve and surface modeling and analysis tools for 
 
 ### Curve Commands
 
-#### 5. ccRemoveCrvKnots
+#### 6. ccRemoveCrvKnots
 `ccRemoveCrvKnots` optimizes interior knots without altering physical curve geometry.
 
 * **Domain Normalization:** Applies $D(A) = D(R) \cdot \frac{L(A)}{L(R)}$ across fully multiple joints to equalize derivative speeds before knot deletion, eliminating control point distortion.
 * **Multi-Strategy Solver:** Runs parallel brute-force evaluations (Singular/Plural, Forward/Reverse, and Multiplicity Bracketing) to return the curve with the fewest possible knots within deviation tolerance.
 
-#### 6. ccConvertCrvToBezier
+#### 7. ccConvertCrvToBezier
 `ccConvertCrvToBezier` converts multi-span NURBS curves into single-span Bezier curves.
 
 * **Adaptive Cubic Bulge-Fitting:** Uses high-speed iterative tangent-sliding loops for degree-3 targets.
 * **Fallback Engine:** Employs native rebuild fallbacks for arbitrary target degrees, enforcing strict tangency preservation and deviation limits.
 
-#### 7. ccConvertCrvToArc & ccConvertCrvToLine
+#### 8. ccConvertCrvToArc & ccConvertCrvToLine
 * **ccConvertCrvToArc:** Converts planar curve spans or entire curves into exact arc segments within tolerance.
 * **ccConvertCrvToLine:** Replaces linear curve spans with exact line segments.
 
-#### 8. ccSimplifyCrv
+#### 9. ccSimplifyCrv
 `ccSimplifyCrv` performs greedy span evaluation along curve sub-domains to replace qualified smooth sections with lines, arcs, Beziers, or uniform NURBS curves. 
 * **Granular Control:** Utilizes strict, independent thresholds for `Max crv dev`, `Max angle dev`, `Min seg len`, and `Min arc bulge`.
 * **Seam Preservation:** Mathematically locks the domain structure and parameterization of closed curves during extraction to guarantee zero geometric drifting or `_SelDup` failures.
 * **Interactive UI:** Features a dynamic dialog with live-updating previews and pre/post conversion segment reporting.
 
-#### 9. ccMakeUniformCrv
+#### 10. ccMakeUniformCrv
 Converts non-uniform NURBS curves into uniform NURBS curves while strictly respecting geometric deviation tolerances.
 
 ---
 
 ### Analysis Commands
 
-#### 10. ccSelUniformNurbsCrv
+#### 11. ccSelUniformNurbsCrv
 Selects all mathematically uniform NURBS curves in the active document or within a pre-selected subset of curves.
 
-#### 11. ccGCon
+#### 12. ccGCon
 `ccGCon` measures geometric continuity ($G0$, $G1$, $G2$, $G3$, $G^\infty$) between two curves at a junction using normalized domain scaling and $G3$ geometric matching.
 
-#### 12. ccCrvContinuities & ccCrvDiscontinuities
+#### 13. ccCrvContinuities & ccCrvDiscontinuities
 * **ccCrvContinuities:** Reports geometric continuity levels across all internal span joints of selected curves.
 * **ccCrvDiscontinuities:** Locates and marks curve parameters where continuity drops below a requested target tier.
 
@@ -125,7 +137,7 @@ Selects all mathematically uniform NURBS curves in the active document or within
 
 ### Utility Commands
 
-#### 13. ccAboutCADacombs
+#### 14. ccAboutCADacombs
 Displays plugin version information, developer credits, and license details.
 
 ---

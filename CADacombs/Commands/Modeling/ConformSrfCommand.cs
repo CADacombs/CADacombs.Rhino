@@ -47,17 +47,151 @@ namespace CADacombs.Commands.Modeling
 
             var startingSrfRefs = goSrf.Objects().ToList();
 
+            var targetRefs = new List<ObjRef>();
             var goTargets = new GetObject();
             goTargets.SetCommandPrompt("Select target surfaces, polysurfaces, SubDs and meshes");
             goTargets.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.SubD;
-            goTargets.AcceptNumber(false, false);
-            goTargets.DisablePreSelect(); 
-            goTargets.GetMultiple(1, 0);
+            goTargets.EnablePreSelect(false, true); 
+            goTargets.DeselectAllBeforePostSelect = false;
 
-            if (goTargets.CommandResult() != Result.Success)
-                return goTargets.CommandResult();
+            string[] listDirection = { "Pull", "ProjectDown", "ProjectUp" };
+            string[] listSolver = { "DirectCP", "DirectGreville", "Relaxed", "LeastSquares" };
+            string[] listSampling = { "Distributed", "NearestPoint" };
+            string[] listWeight = { "Linear", "Hyperbolic", "Gaussian" };
+            string[] listOutput = { "Input", "Current", "Target" };
 
-            var targetRefs = goTargets.Objects().ToList();
+            int currentDir = ConformSrfOptions.MappingDirection == 0 ? 0 : (ConformSrfOptions.FlipDirection ? 2 : 1);
+
+            var opDomain = new OptionDouble(ConformSrfOptions.PercentOfDomain);
+            var opUseStiff = new OptionToggle(ConformSrfOptions.UseStiffness, "No", "Yes");
+            var opStiffExp = new OptionInteger(ConformSrfOptions.EnergyStiffnessExponent);
+            var opConstrain = new OptionToggle(ConformSrfOptions.Constrain1D, "No", "Yes");
+            var opTol = new OptionDouble(ConformSrfOptions.Tolerance);
+            var opTime = new OptionDouble(ConformSrfOptions.SolverTimeout);
+            var opDel = new OptionToggle(ConformSrfOptions.DeleteStartingSrf, "No", "Yes");
+            var opErr = new OptionToggle(ConformSrfOptions.AddErrorLines, "No", "Yes");
+
+            while (true)
+            {
+                goTargets.ClearCommandOptions();
+                if (mode == RunMode.Scripted)
+                {
+                    goTargets.AddOptionList("Direction", listDirection, currentDir);
+                    goTargets.AddOptionList("SolverType", listSolver, ConformSrfOptions.SolverType);
+
+                    bool isWeighted = ConformSrfOptions.SolverType == 2;
+                    bool isMatrix = ConformSrfOptions.SolverType == 3;
+                    bool isZAxis = currentDir > 0;
+
+                    if (isWeighted)
+                    {
+                        goTargets.AddOptionList("Sampling", listSampling, ConformSrfOptions.SamplingMode);
+                        goTargets.AddOptionList("WeightCurve", listWeight, ConformSrfOptions.WeightCurve);
+                        goTargets.AddOptionDouble("DomainPercent", ref opDomain);
+                    }
+
+                    if (isMatrix)
+                    {
+                        goTargets.AddOptionToggle("UseStiffness", ref opUseStiff);
+                        if (ConformSrfOptions.UseStiffness)
+                        {
+                            goTargets.AddOptionInteger("StiffnessExponent", ref opStiffExp);
+                        }
+                    }
+
+                    if (isMatrix && isZAxis)
+                    {
+                        goTargets.AddOptionToggle("Constrain1D", ref opConstrain);
+                    }
+
+                    goTargets.AddOptionDouble("Tolerance", ref opTol);
+                    goTargets.AddOptionDouble("TimeoutSecs", ref opTime);
+                    goTargets.AddOptionList("OutputLayer", listOutput, ConformSrfOptions.OutputLayer);
+                    goTargets.AddOptionToggle("DeleteSource", ref opDel);
+                    goTargets.AddOptionToggle("AddErrorLines", ref opErr);
+                }
+
+                var resTargets = goTargets.GetMultiple(1, 0);
+
+                if (resTargets == GetResult.Option)
+                {
+                    var opt = goTargets.Option();
+                    string name = opt.EnglishName;
+
+                    if (name == "Direction")
+                    {
+                        currentDir = opt.CurrentListOptionIndex;
+                        ConformSrfOptions.MappingDirection = currentDir == 0 ? 0 : 1;
+                        ConformSrfOptions.FlipDirection = currentDir == 2;
+                    }
+                    else if (name == "SolverType") ConformSrfOptions.SolverType = opt.CurrentListOptionIndex;
+                    else if (name == "Sampling") ConformSrfOptions.SamplingMode = opt.CurrentListOptionIndex;
+                    else if (name == "WeightCurve") ConformSrfOptions.WeightCurve = opt.CurrentListOptionIndex;
+                    else if (name == "DomainPercent")
+                    {
+                        double val = opDomain.CurrentValue;
+                        if (val < 0.01) val = 0.01;
+                        if (val > 50.0) val = 50.0;
+                        ConformSrfOptions.PercentOfDomain = val;
+                        opDomain.CurrentValue = val;
+                    }
+                    else if (name == "UseStiffness") ConformSrfOptions.UseStiffness = opUseStiff.CurrentValue;
+                    else if (name == "StiffnessExponent")
+                    {
+                        int val = opStiffExp.CurrentValue;
+                        if (val < -10) val = -10;
+                        if (val > 10) val = 10;
+                        ConformSrfOptions.EnergyStiffnessExponent = val;
+                        opStiffExp.CurrentValue = val;
+                    }
+                    else if (name == "Constrain1D") ConformSrfOptions.Constrain1D = opConstrain.CurrentValue;
+                    else if (name == "Tolerance")
+                    {
+                        double val = opTol.CurrentValue;
+                        double minTol = 1e-6 * RhinoMath.UnitScale(UnitSystem.Millimeters, doc.ModelUnitSystem);
+                        if (val < 0) val = 10.0 * doc.ModelAbsoluteTolerance;
+                        if (val < minTol) val = minTol;
+                        ConformSrfOptions.Tolerance = val;
+                        opTol.CurrentValue = val;
+                    }
+                    else if (name == "TimeoutSecs")
+                    {
+                        double val = opTime.CurrentValue;
+                        if (val < 0.1) val = 0.1;
+                        if (val > 60.0) val = 60.0;
+                        ConformSrfOptions.SolverTimeout = val;
+                        opTime.CurrentValue = val;
+                    }
+                    else if (name == "OutputLayer") ConformSrfOptions.OutputLayer = opt.CurrentListOptionIndex;
+                    else if (name == "DeleteSource") ConformSrfOptions.DeleteStartingSrf = opDel.CurrentValue;
+                    else if (name == "AddErrorLines") ConformSrfOptions.AddErrorLines = opErr.CurrentValue;
+
+                    continue;
+                }
+                else if (resTargets == GetResult.Cancel)
+                {
+                    return Result.Cancel;
+                }
+                else if (resTargets == GetResult.Object)
+                {
+                    foreach (var obj in goTargets.Objects())
+                    {
+                        bool isStartingSrf = false;
+                        foreach (var startSrf in startingSrfRefs)
+                        {
+                            if (obj.ObjectId == startSrf.ObjectId) { isStartingSrf = true; break; }
+                        }
+                        if (!isStartingSrf) targetRefs.Add(obj);
+                    }
+                    break;
+                }
+            }
+
+            if (targetRefs.Count == 0)
+            {
+                RhinoApp.WriteLine("No valid targets selected.");
+                return Result.Cancel;
+            }
 
             doc.Objects.UnselectAll();
             doc.Views.Redraw();

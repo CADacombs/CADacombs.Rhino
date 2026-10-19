@@ -33,6 +33,7 @@
       <tool_bar_item guid="d0000001-0000-0000-0000-000000000022">
         <text><locale_1033>ProjectSrf</locale_1033></text>
         <left_macro_id>d0000001-0000-0000-0000-000000000021</left_macro_id>
+        <right_macro_id>d0000001-0000-0000-0000-000000000023</right_macro_id>
       </tool_bar_item>
       <!-- Modification -->
       <tool_bar_item guid="42b6a0fe-f3b5-4a50-8e1f-e137babbe79e">
@@ -129,6 +130,14 @@
       <button_text><locale_1033>ProjectSrf</locale_1033></button_text>
       <menu_text><locale_1033>ccProjectSrf</locale_1033></menu_text>
       <script>! _ccProjectSrf</script>
+    </macro_item>
+
+    <macro_item guid="d0000001-0000-0000-0000-000000000023" bitmap_id="d0000001-0000-0000-0000-000000000020">
+      <text><locale_1033>Macro.ccPullSrf</locale_1033></text>
+      <tooltip><locale_1033>ccPullSrf</locale_1033></tooltip>
+      <button_text><locale_1033>PullSrf</locale_1033></button_text>
+      <menu_text><locale_1033>ccPullSrf</locale_1033></menu_text>
+      <script>! _ccPullSrf</script>
     </macro_item>
 
     <macro_item guid="80d96364-4fdc-4485-98fc-e5e374b03321" bitmap_id="d2c12ed9-9585-4f85-9662-fb0ff32d9bbb">

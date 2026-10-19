@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
+## [0.2.10] - 2026-10-19
+
+### Added
+- `ccPullSrf`: Added a new companion command utilizing the new `ConformSrf` backend physics to pull NURBS surfaces to targets using closest-point relaxation and global least-squares solving.
+- `ccProjectSrf` & `ccPullSrf`: Added full CLI (Command Line Interface) support. Options dynamically appear based on the selected `SolverType` (e.g., `Sampling` and `DomainPercent` for Relaxed solvers; `UseStiffness` for Matrix solvers) for macro-friendly, dialog-free execution.
+- **Math Engine:** Added a *Stagnation Check* to the "Weighted / relaxed" solver that automatically short-circuits the iteration loop if surface accuracy fails to improve by a dynamically scaled document tolerance of $10^{-5}$, preventing wasted computation time.
+- **Math Engine:** Added detailed `StopReason` feedback to the command-line output, explicitly reporting whether a solve "Converged", "Timed out", "Single-step solve complete", was "Geometrically constrained", or "made no improvement".
+
+### Changed
+- `ccProjectSrf`: Decoupled entirely from `ccDrape`. The command now routes through the dedicated `ConformSrf` physics engine rather than the iterative high-to-low gravity engine.
+- `ccConformSrf`: Renamed the master backend command from `ccFitSrfToTarget` to `ccConformSrf` and hid it from the primary user interface. Users now access the unified matrix and spring-relaxation engine cleanly via the familiar `ccProjectSrf` and `ccPullSrf` wrapper commands.
+- **Dialog UI:** Drastically narrowed the horizontal footprint of the unified dialog by folding the Tolerance and Timeout numeric inputs directly into the core `TableLayout` grid.
+- **Dialog UI:** Renamed mapping directions to "Pull (Closest point)", "Project down (-Z)", and "Project up (+Z)" to explicitly align with established Rhino vocabulary.
+
+### Fixed
+- **Dialog UI:** Fixed a UX placebo by explicitly disabling the "Constrain to 1D displacement" checkbox when using the "Weighted / relaxed" solver, as Z-axis error vectors intrinsically result in purely vertical mathematical translations.
+
 ## [0.2.9] - 2026-10-08
 
 ### Added
