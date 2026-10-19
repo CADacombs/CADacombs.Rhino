@@ -37,7 +37,7 @@ namespace CADacombs.Commands.Modeling
         }
     }
 
-    public class FitSrfToTargetDialog : CADacombsDialogBase
+    public class ConformSrfDialog : CADacombsDialogBase
     {
         public DrapeDialogAction Action { get; set; } = DrapeDialogAction.None;
         public List<ProjectionResult> Results { get; private set; }
@@ -56,6 +56,8 @@ namespace CADacombs.Commands.Modeling
         private DropDown _dropSamplingMode;
         private DropDown _dropWeightCurve;
         private NumericStepper _stepPercentDomain;
+        
+        private CheckBox _chkUseStiffness;
         private NumericStepper _stepEnergyStiffness;
         private CheckBox _chkConstrain1D;
 
@@ -83,14 +85,13 @@ namespace CADacombs.Commands.Modeling
 
         private bool _isComputing = false;
         private bool _cancelRequested = false;
-        private bool _previewPending = false;
         private bool _isUpdatingTextProgrammatically = false;
         private int _computationId = 0;
         private UITimer _typingTimer;
 
-        private Dictionary<string, (List<ProjectionResult>, List<string>, double, double)> _previewCache = new Dictionary<string, (List<ProjectionResult>, List<string>, double, double)>();
+        private Dictionary<string, (List<ProjectionResult>, List<string>, double, double, double, double, bool)> _previewCache = new Dictionary<string, (List<ProjectionResult>, List<string>, double, double, double, double, bool)>();
 
-        public FitSrfToTargetDialog(ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, DrapeConduit originalConduit)
+        public ConformSrfDialog(ObjRef[] targetRefs, List<ObjRef> startingSrfRefs, DrapeConduit originalConduit)
         {
             _targetRefs = targetRefs;
             _startingSrfRefs = startingSrfRefs;
@@ -98,7 +99,7 @@ namespace CADacombs.Commands.Modeling
             originalConduit.Enabled = false;
             _conduit = new FitSrfConduit { Enabled = true };
 
-            Title = "CADacombs Fit Surface to Target";
+            Title = "CADacombs Conform Surface";
             Resizable = false;
             AutoSize = true; 
             Padding = new Padding(12);
@@ -125,24 +126,24 @@ namespace CADacombs.Commands.Modeling
             base.OnClosed(e);
         }
 
-        protected override Eto.Drawing.Point? LoadSavedLocation() => FitSrfToTargetOptions.WindowLocation;
-        protected override void SaveCurrentLocation(Eto.Drawing.Point location) => FitSrfToTargetOptions.WindowLocation = location;
+        protected override Eto.Drawing.Point? LoadSavedLocation() => ConformSrfOptions.WindowLocation;
+        protected override void SaveCurrentLocation(Eto.Drawing.Point location) => ConformSrfOptions.WindowLocation = location;
 
         private void CreateControls()
         {
             _btnReselSrf = new Button { Text = "Reselect" };
             _btnReselSrf.Click += (s, e) => { Action = DrapeDialogAction.PickCustomSurface; Close(); };
             
-            _btnAddRemSrf = new Button { Text = "Add / remove" };
+            _btnAddRemSrf = new Button { Text = "Add/Remove" };
             _btnAddRemSrf.Click += (s, e) => { Action = DrapeDialogAction.AddRemoveStartingSurfaces; Close(); };
 
             _dropMappingDirection = new DropDown();
-            _dropMappingDirection.Items.Add("Closest point");
-            _dropMappingDirection.Items.Add("Z-axis reversed (Down)");
-            _dropMappingDirection.Items.Add("Z-axis (Up)");
+            _dropMappingDirection.Items.Add("Pull (Closest point)");
+            _dropMappingDirection.Items.Add("Project down (-Z)");
+            _dropMappingDirection.Items.Add("Project up (+Z)");
             
-            if (FitSrfToTargetOptions.MappingDirection == 0) _dropMappingDirection.SelectedIndex = 0;
-            else if (!FitSrfToTargetOptions.FlipDirection) _dropMappingDirection.SelectedIndex = 1;
+            if (ConformSrfOptions.MappingDirection == 0) _dropMappingDirection.SelectedIndex = 0;
+            else if (!ConformSrfOptions.FlipDirection) _dropMappingDirection.SelectedIndex = 1;
             else _dropMappingDirection.SelectedIndex = 2;
             
             _dropMappingDirection.SelectedIndexChanged += OnDropdownChanged;
@@ -152,68 +153,73 @@ namespace CADacombs.Commands.Modeling
             _dropSolverType.Items.Add("Direct Greville");
             _dropSolverType.Items.Add("Weighted / relaxed");
             _dropSolverType.Items.Add("Global least squares");
-            _dropSolverType.Items.Add("Energy minimization");
-            _dropSolverType.SelectedIndex = FitSrfToTargetOptions.SolverType;
+            
+            int savedType = ConformSrfOptions.SolverType;
+            if (savedType > 3) savedType = 3; 
+            _dropSolverType.SelectedIndex = savedType;
             _dropSolverType.SelectedIndexChanged += OnDropdownChanged;
 
             _dropSamplingMode = new DropDown();
             _dropSamplingMode.Items.Add("Distributed");
             _dropSamplingMode.Items.Add("Nearest point");
-            _dropSamplingMode.SelectedIndex = FitSrfToTargetOptions.SamplingMode;
+            _dropSamplingMode.SelectedIndex = ConformSrfOptions.SamplingMode;
             _dropSamplingMode.SelectedIndexChanged += OnDropdownChanged;
 
             _dropWeightCurve = new DropDown();
             _dropWeightCurve.Items.Add("Linear");
             _dropWeightCurve.Items.Add("Hyperbolic");
             _dropWeightCurve.Items.Add("Gaussian");
-            _dropWeightCurve.SelectedIndex = FitSrfToTargetOptions.WeightCurve;
+            _dropWeightCurve.SelectedIndex = ConformSrfOptions.WeightCurve;
             _dropWeightCurve.SelectedIndexChanged += OnDropdownChanged;
 
-            _stepPercentDomain = new NumericStepper { Value = FitSrfToTargetOptions.PercentOfDomain, MinValue = 0.001, MaxValue = 100.0, DecimalPlaces = 3, Width = 80, Increment = 1.0 };
+            _stepPercentDomain = new NumericStepper { Value = ConformSrfOptions.PercentOfDomain, DecimalPlaces = 2, Increment = 1.0 };
             _stepPercentDomain.ValueChanged += OnNumericInput;
 
-            _stepEnergyStiffness = new NumericStepper { Value = FitSrfToTargetOptions.EnergyStiffnessExponent, MinValue = -20, MaxValue = 20, DecimalPlaces = 0, Width = 80, Increment = 1 };
+            _chkUseStiffness = new CheckBox { Checked = ConformSrfOptions.UseStiffness };
+            _chkUseStiffness.CheckedChanged += OnDropdownChanged;
+
+            _stepEnergyStiffness = new NumericStepper { Value = ConformSrfOptions.EnergyStiffnessExponent, DecimalPlaces = 0, Increment = 1 };
             _stepEnergyStiffness.ValueChanged += OnNumericInput;
 
-            _chkConstrain1D = new CheckBox { Text = "Constrain to 1D displacement (Z-axis)", Checked = FitSrfToTargetOptions.Constrain1D };
+            _chkConstrain1D = new CheckBox { Text = "Constrain to 1D displacement (Z-axis)", Checked = ConformSrfOptions.Constrain1D };
             _chkConstrain1D.CheckedChanged += OnDropdownChanged;
 
-            _txtTolerance = new TextBox { Text = FitSrfToTargetOptions.Tolerance.ToString("G"), Width = 80 };
+            _txtTolerance = new TextBox { Text = ConformSrfOptions.Tolerance.ToString("G") };
             _txtTolerance.TextChanged += OnNumericInput;
 
-            _stepTimeout = new NumericStepper { Value = FitSrfToTargetOptions.SolverTimeout, MinValue = 0.1, MaxValue = 60.0, DecimalPlaces = 1, Width = 80, Increment = 0.5 };
+            _stepTimeout = new NumericStepper { Value = ConformSrfOptions.SolverTimeout, DecimalPlaces = 1, Increment = 0.5 };
             _stepTimeout.ValueChanged += OnNumericInput;
 
             _dropOutputLayer = new DropDown();
             _dropOutputLayer.Items.Add("Input");
             _dropOutputLayer.Items.Add("Current");
             _dropOutputLayer.Items.Add("Target object");
-            _dropOutputLayer.SelectedIndex = FitSrfToTargetOptions.OutputLayer;
+            _dropOutputLayer.SelectedIndex = ConformSrfOptions.OutputLayer;
             _dropOutputLayer.SelectedIndexChanged += (s, e) => 
             {
-                FitSrfToTargetOptions.OutputLayer = _dropOutputLayer.SelectedIndex;
+                ConformSrfOptions.OutputLayer = _dropOutputLayer.SelectedIndex;
                 UpdateConduitColors();
                 RhinoDoc.ActiveDoc.Views.Redraw();
             };
 
-            _chkDeleteInput = new CheckBox { Text = "Delete input", Checked = FitSrfToTargetOptions.DeleteStartingSrf };
-            _chkDeleteInput.CheckedChanged += (s, e) => { FitSrfToTargetOptions.DeleteStartingSrf = _chkDeleteInput.Checked ?? false; };
+            _chkDeleteInput = new CheckBox { Text = "Delete source", Checked = ConformSrfOptions.DeleteStartingSrf };
+            _chkDeleteInput.CheckedChanged += (s, e) => { ConformSrfOptions.DeleteStartingSrf = _chkDeleteInput.Checked ?? false; };
 
-            _chkAddErrorLines = new CheckBox { Text = "Add error lines", Checked = FitSrfToTargetOptions.AddErrorLines };
-            _chkAddErrorLines.CheckedChanged += (s, e) => { FitSrfToTargetOptions.AddErrorLines = _chkAddErrorLines.Checked ?? false; };
+            _chkAddErrorLines = new CheckBox { Text = "Add error lines", Checked = ConformSrfOptions.AddErrorLines };
+            _chkAddErrorLines.CheckedChanged += (s, e) => { ConformSrfOptions.AddErrorLines = _chkAddErrorLines.Checked ?? false; };
 
-            _chkShowSurface = new CheckBox { Text = "Shaded", Checked = FitSrfToTargetOptions.ShowSurface };
-            _chkShowWireframe = new CheckBox { Text = "Wireframe", Checked = FitSrfToTargetOptions.ShowWireframe };
-            _chkShowPolygon = new CheckBox { Text = "Control polygon", Checked = FitSrfToTargetOptions.ShowPolygon };
-            _chkShowErrorLines = new CheckBox { Text = "Error lines", Checked = FitSrfToTargetOptions.ShowErrorLines };
+            _chkShowSurface = new CheckBox { Text = "Shaded", Checked = ConformSrfOptions.ShowSurface };
+            _chkShowWireframe = new CheckBox { Text = "Wireframe", Checked = ConformSrfOptions.ShowWireframe };
+            _chkShowPolygon = new CheckBox { Text = "Control polygon", Checked = ConformSrfOptions.ShowPolygon };
+            _chkShowErrorLines = new CheckBox { Text = "Error lines", Checked = ConformSrfOptions.ShowErrorLines };
 
             EventHandler<EventArgs> displayEvent = (s, e) => 
             {
                 _conduit.ShowSurface = _chkShowSurface.Checked ?? true;
                 _conduit.ShowWireframe = _chkShowWireframe.Checked ?? true;
                 _conduit.ShowPolygon = _chkShowPolygon.Checked ?? false;
-                FitSrfToTargetOptions.ShowErrorLines = _chkShowErrorLines.Checked ?? false;
-                _conduit.ShowErrorLines = FitSrfToTargetOptions.ShowErrorLines;
+                ConformSrfOptions.ShowErrorLines = _chkShowErrorLines.Checked ?? false;
+                _conduit.ShowErrorLines = ConformSrfOptions.ShowErrorLines;
                 RhinoDoc.ActiveDoc.Views.Redraw();
             };
             
@@ -228,7 +234,8 @@ namespace CADacombs.Commands.Modeling
             _pbTime = new ProgressBar { MinValue = 0, MaxValue = 100, Value = 0, Height = 8 };
             _pbError = new ProgressBar { MinValue = 0, MaxValue = 100, Value = 0, Height = 8 };
 
-            _btnSolve = new Button { Text = "Solve", Width = 75, Enabled = false };
+            _btnSolve = new Button { Text = "Solve", Enabled = false };
+            _btnSolve.TextColor = Colors.Gray; 
             _btnSolve.Click += (s, e) => 
             {
                 if (_isComputing)
@@ -236,6 +243,7 @@ namespace CADacombs.Commands.Modeling
                     _cancelRequested = true;
                     _btnSolve.Text = "Stopping...";
                     _btnSolve.Enabled = false;
+                    _btnSolve.TextColor = Colors.Gray;
                 }
                 else
                 {
@@ -257,7 +265,15 @@ namespace CADacombs.Commands.Modeling
         {
             var layout = new DynamicLayout { DefaultSpacing = new Size(5, 10) };
             
-            var btnAddRemTargets = new Button { Text = "Add / remove" };
+            layout.AddRow(new StackLayout { 
+                Orientation = Orientation.Horizontal, 
+                Spacing = 10, 
+                VerticalContentAlignment = VerticalAlignment.Center, 
+                Items = { new Label { Text = "Surfaces", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, _btnAddRemSrf, _btnReselSrf } 
+            });
+            layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
+
+            var btnAddRemTargets = new Button { Text = "Add/Remove" };
             btnAddRemTargets.Click += (s, e) => { Action = DrapeDialogAction.AddRemoveTargets; Close(); };
             var btnReselTargets = new Button { Text = "Reselect" };
             btnReselTargets.Click += (s, e) => { Action = DrapeDialogAction.ReselectTargets; Close(); };
@@ -270,61 +286,53 @@ namespace CADacombs.Commands.Modeling
             });
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            layout.AddRow(new StackLayout { 
-                Orientation = Orientation.Horizontal, 
-                Spacing = 10, 
-                VerticalContentAlignment = VerticalAlignment.Center, 
-                Items = { new Label { Text = "Starting surface", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, _btnAddRemSrf, _btnReselSrf } 
-            });
-            layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
-
             layout.AddRow(new Label { Text = "Solver options", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
             
             var tableSolver = new TableLayout { Spacing = new Size(10, 5) };
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Mapping dir:", VerticalAlignment = VerticalAlignment.Center }, _dropMappingDirection, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Mapping direction:", VerticalAlignment = VerticalAlignment.Center }, _dropMappingDirection, new Panel()));
             tableSolver.Rows.Add(new TableRow(new Label { Text = "Solver type:", VerticalAlignment = VerticalAlignment.Center }, _dropSolverType, new Panel()));
             tableSolver.Rows.Add(new TableRow(new Label { Text = "Sampling mode:", VerticalAlignment = VerticalAlignment.Center }, _dropSamplingMode, new Panel()));
             tableSolver.Rows.Add(new TableRow(new Label { Text = "Weight curve:", VerticalAlignment = VerticalAlignment.Center }, _dropWeightCurve, new Panel()));
-            tableSolver.Rows.Add(new TableRow(new Label { Text = "Displacement:" }, _chkConstrain1D, new Panel()));
-            layout.AddRow(tableSolver);
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Domain %:", VerticalAlignment = VerticalAlignment.Center }, _stepPercentDomain, new Panel()));
             
-            var domainStiffStack = new StackLayout { 
-                Orientation = Orientation.Horizontal, 
-                Spacing = 15, 
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Items = { 
-                    new Label { Text = "Domain %:" }, _stepPercentDomain,
-                    new Label { Text = "Stiffness (1eX):" }, _stepEnergyStiffness
-                } 
+            var stiffLabelStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, VerticalContentAlignment = VerticalAlignment.Center, Items = { _chkUseStiffness, new Label { Text = "Stiffness: 10^", VerticalAlignment = VerticalAlignment.Center } } };
+            tableSolver.Rows.Add(new TableRow(stiffLabelStack, _stepEnergyStiffness, new Panel()));
+            
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Tolerance:", VerticalAlignment = VerticalAlignment.Center }, _txtTolerance, new Panel()));
+            tableSolver.Rows.Add(new TableRow(new Label { Text = "Timeout (s):", VerticalAlignment = VerticalAlignment.Center }, _stepTimeout, new Panel()));
+            
+            var solverGroup = new StackLayout { 
+                Orientation = Orientation.Vertical, 
+                Spacing = 5, 
+                Items = { tableSolver, _chkConstrain1D } 
             };
-            layout.AddRow(domainStiffStack);
+            layout.AddRow(solverGroup);
             
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
-            
-            var tolTimeStack = new StackLayout { 
-                Orientation = Orientation.Horizontal, 
-                Spacing = 15, 
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Items = { 
-                    new Label { Text = "Tolerance:" }, _txtTolerance,
-                    new Label { Text = "Timeout (s):" }, _stepTimeout
-                } 
-            };
-            layout.AddRow(tolTimeStack);
 
             layout.AddRow(_btnSolve);
 
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
-            layout.AddRow(new Label { Text = "Preview", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) });
-
-            var previewCheckStack = new StackLayout { 
+            var previewHeaderStack = new StackLayout { 
                 Orientation = Orientation.Horizontal, 
                 Spacing = 10, 
                 VerticalContentAlignment = VerticalAlignment.Center, 
-                Items = { _chkShowSurface, _chkShowWireframe, _chkShowPolygon, _chkShowErrorLines } 
+                Items = { 
+                    new Label { Text = "Preview", Font = new Eto.Drawing.Font(SystemFont.Bold, 10) }, 
+                    _chkShowSurface, 
+                    _chkShowWireframe 
+                } 
             };
-            layout.AddRow(previewCheckStack);
+            layout.AddRow(previewHeaderStack);
+
+            var previewCheckStack2 = new StackLayout { 
+                Orientation = Orientation.Horizontal, 
+                Spacing = 10, 
+                VerticalContentAlignment = VerticalAlignment.Center, 
+                Items = { _chkShowPolygon, _chkShowErrorLines } 
+            };
+            layout.AddRow(previewCheckStack2);
             
             _progressLayout = new DynamicLayout { DefaultSpacing = new Size(5, 5), Visible = false };
             _progressLayout.AddRow(new Label { Text = "Time:", Font = new Eto.Drawing.Font(SystemFont.Default, 8), VerticalAlignment = VerticalAlignment.Center }, _pbTime);
@@ -347,25 +355,41 @@ namespace CADacombs.Commands.Modeling
             Content = layout;
         }
 
+        private void ForceControlRefresh(Control control)
+        {
+            if (control.HasFocus)
+            {
+                _btnCancel.Focus();
+                control.Focus();
+                if (control is TextBox tb)
+                {
+                    tb.CaretIndex = tb.Text.Length;
+                }
+            }
+        }
+
         private void UpdateAdvancedOptionsVisibility()
         {
             int solverType = _dropSolverType.SelectedIndex;
             bool isWeighted = solverType == 2;
-            bool isMatrix = solverType == 3 || solverType == 4;
+            bool isMatrix = solverType == 3;
             bool isZAxis = _dropMappingDirection.SelectedIndex > 0;
             
             _dropSamplingMode.Enabled = isWeighted;
             _dropWeightCurve.Enabled = isWeighted;
             _stepPercentDomain.Enabled = isWeighted;
-            _stepEnergyStiffness.Enabled = solverType == 4;
+            
+            _chkUseStiffness.Enabled = isMatrix;
+            _stepEnergyStiffness.Enabled = isMatrix && (_chkUseStiffness.Checked ?? false);
             
             _chkConstrain1D.Enabled = isMatrix && isZAxis;
         }
 
         private void OnDropdownChanged(object sender, EventArgs e)
         {
-            FitSrfToTargetOptions.MappingDirection = _dropMappingDirection.SelectedIndex == 0 ? 0 : 1;
-            FitSrfToTargetOptions.FlipDirection = _dropMappingDirection.SelectedIndex == 2;
+            ConformSrfOptions.MappingDirection = _dropMappingDirection.SelectedIndex == 0 ? 0 : 1;
+            ConformSrfOptions.FlipDirection = _dropMappingDirection.SelectedIndex == 2;
+            ConformSrfOptions.UseStiffness = _chkUseStiffness.Checked ?? false;
             
             UpdateAdvancedOptionsVisibility();
             Application.Instance.AsyncInvoke(() => UpdatePreview());
@@ -375,11 +399,128 @@ namespace CADacombs.Commands.Modeling
         {
             if (_isUpdatingTextProgrammatically) return;
 
-            if (sender == _txtTolerance && Results != null && Results.Count > 0)
+            if (sender == _stepPercentDomain)
+            {
+                double val = _stepPercentDomain.Value;
+                if (val > 50.0)
+                {
+                    Application.Instance.AsyncInvoke(() => {
+                        _isUpdatingTextProgrammatically = true;
+                        _stepPercentDomain.Value = 50.0;
+                        ForceControlRefresh(_stepPercentDomain);
+                        _isUpdatingTextProgrammatically = false;
+                    });
+                }
+                else if (val < 0.0)
+                {
+                    Application.Instance.AsyncInvoke(() => {
+                        _isUpdatingTextProgrammatically = true;
+                        _stepPercentDomain.Value = 0.01;
+                        ForceControlRefresh(_stepPercentDomain);
+                        _isUpdatingTextProgrammatically = false;
+                    });
+                }
+            }
+            else if (sender == _stepEnergyStiffness)
+            {
+                double val = _stepEnergyStiffness.Value;
+                if (val > 10)
+                {
+                    Application.Instance.AsyncInvoke(() => {
+                        _isUpdatingTextProgrammatically = true;
+                        _stepEnergyStiffness.Value = 10;
+                        ForceControlRefresh(_stepEnergyStiffness);
+                        _isUpdatingTextProgrammatically = false;
+                    });
+                }
+                else if (val < -10)
+                {
+                    Application.Instance.AsyncInvoke(() => {
+                        _isUpdatingTextProgrammatically = true;
+                        _stepEnergyStiffness.Value = -10;
+                        ForceControlRefresh(_stepEnergyStiffness);
+                        _isUpdatingTextProgrammatically = false;
+                    });
+                }
+            }
+            else if (sender == _stepTimeout)
+            {
+                double val = _stepTimeout.Value;
+                if (val > 60.0)
+                {
+                    Application.Instance.AsyncInvoke(() => {
+                        _isUpdatingTextProgrammatically = true;
+                        _stepTimeout.Value = 60.0;
+                        ForceControlRefresh(_stepTimeout);
+                        _isUpdatingTextProgrammatically = false;
+                    });
+                }
+                else if (val < 0.0)
+                {
+                    Application.Instance.AsyncInvoke(() => {
+                        _isUpdatingTextProgrammatically = true;
+                        _stepTimeout.Value = 0.1;
+                        ForceControlRefresh(_stepTimeout);
+                        _isUpdatingTextProgrammatically = false;
+                    });
+                }
+                
+                double currentTimeout = _stepTimeout.Value;
+                if (currentTimeout > 60.0) currentTimeout = 60.0;
+                if (currentTimeout < 0.1) currentTimeout = 0.1;
+                
+                ConformSrfOptions.SolverTimeout = currentTimeout;
+                int sType = _dropSolverType.SelectedIndex;
+
+                if (sType == 0 || sType == 3) return; 
+                
+                string cacheKey = $"{ConformSrfOptions.MappingDirection}_{ConformSrfOptions.FlipDirection}_{ConformSrfOptions.SolverType}_{ConformSrfOptions.UseStiffness}_{ConformSrfOptions.EnergyStiffnessExponent}_{ConformSrfOptions.Constrain1D}_{ConformSrfOptions.SamplingMode}_{ConformSrfOptions.WeightCurve}_{ConformSrfOptions.PercentOfDomain}";
+                
+                if (_previewCache.TryGetValue(cacheKey, out var cachedData))
+                {
+                    double oldTimeout = cachedData.Item5;
+                    double maxElapsed = cachedData.Item6;
+                    bool allConverged = cachedData.Item7;
+
+                    bool finishedNaturally = allConverged || (maxElapsed < oldTimeout);
+
+                    if (finishedNaturally && currentTimeout >= maxElapsed)
+                    {
+                        _previewCache[cacheKey] = (cachedData.Item1, cachedData.Item2, cachedData.Item3, cachedData.Item4, currentTimeout, maxElapsed, allConverged);
+                        return; 
+                    }
+                }
+            }
+            else if (sender == _txtTolerance)
             {
                 if (double.TryParse(_txtTolerance.Text, out double newTol))
                 {
-                    UpdateErrorLineFilter(newTol);
+                    ConformSrfOptions.Tolerance = newTol; 
+
+                    if (Results != null && Results.Count > 0)
+                    {
+                        UpdateErrorLineFilter(newTol);
+                        
+                        int sType = _dropSolverType.SelectedIndex;
+                        if (sType == 0 || sType == 3) 
+                        {
+                            double maxDev = Results.Max(r => r?.MaxDeviation ?? 0);
+                            ClearPreviewPending(_startingSrfRefs.Count, Results.Count(s => s == null), maxDev, sType, newTol);
+                            return; 
+                        }
+                        
+                        string cacheKey = $"{ConformSrfOptions.MappingDirection}_{ConformSrfOptions.FlipDirection}_{ConformSrfOptions.SolverType}_{ConformSrfOptions.UseStiffness}_{ConformSrfOptions.EnergyStiffnessExponent}_{ConformSrfOptions.Constrain1D}_{ConformSrfOptions.SamplingMode}_{ConformSrfOptions.WeightCurve}_{ConformSrfOptions.PercentOfDomain}";
+                        if (_previewCache.TryGetValue(cacheKey, out var cachedData))
+                        {
+                            double oldMaxDev = cachedData.Item3;
+                            if (oldMaxDev <= newTol)
+                            {
+                                double maxDev = Results.Max(r => r?.MaxDeviation ?? 0);
+                                ClearPreviewPending(_startingSrfRefs.Count, Results.Count(s => s == null), maxDev, sType, newTol);
+                                return;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -396,7 +537,6 @@ namespace CADacombs.Commands.Modeling
 
         private void SetPreviewRequired(string message)
         {
-            _previewPending = true;
             _btnSolve.Enabled = true;
             _btnSolve.Text = "Solve";
             _btnSolve.TextColor = Colors.Red;
@@ -435,15 +575,14 @@ namespace CADacombs.Commands.Modeling
 
         private void ClearPreviewPending(int expectedCount, int missCount, double maxDev, int solverType, double tolerance)
         {
-            _previewPending = false;
             _btnSolve.Enabled = false;
             _btnSolve.Text = "Solve";
-            _btnSolve.TextColor = SystemColors.ControlText;
+            _btnSolve.TextColor = Colors.Gray;
             _btnSolve.Font = new Eto.Drawing.Font(SystemFont.Default, _btnSolve.Font.Size);
 
             if (missCount == expectedCount && expectedCount > 0)
             {
-                _lblProcessedCount.Text = "The starting surface completely misses the targets.";
+                _lblProcessedCount.Text = "The source surface completely misses the targets.";
                 _lblProcessedCount.TextColor = Colors.DarkRed;
                 _lblMaxDev.Text = "";
                 return;
@@ -496,12 +635,12 @@ namespace CADacombs.Commands.Modeling
 
                 System.Drawing.Color c = doc.Layers.CurrentLayer.Color;
                 
-                if (FitSrfToTargetOptions.OutputLayer == 0 && _startingSrfRefs != null && i < _startingSrfRefs.Count && _startingSrfRefs[i].Object() != null)
+                if (ConformSrfOptions.OutputLayer == 0 && _startingSrfRefs != null && i < _startingSrfRefs.Count && _startingSrfRefs[i].Object() != null)
                 {
                     var attr = _startingSrfRefs[i].Object().Attributes;
                     c = attr.ColorSource == ObjectColorSource.ColorFromObject ? attr.ObjectColor : doc.Layers[attr.LayerIndex].Color;
                 }
-                else if (FitSrfToTargetOptions.OutputLayer == 2 && _targetRefs != null && _targetRefs.Length > 0 && _targetRefs[0].Object() != null)
+                else if (ConformSrfOptions.OutputLayer == 2 && _targetRefs != null && _targetRefs.Length > 0 && _targetRefs[0].Object() != null)
                 {
                     var attr = _targetRefs[0].Object().Attributes;
                     c = attr.ColorSource == ObjectColorSource.ColorFromObject ? attr.ObjectColor : doc.Layers[attr.LayerIndex].Color;
@@ -541,62 +680,151 @@ namespace CADacombs.Commands.Modeling
             {
                 if (tol < 0) tol = 10.0 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
                 if (tol < minTol) tol = minTol;
-                FitSrfToTargetOptions.Tolerance = tol;
+                
+                string tolStr = tol.ToString("G");
+                if (_txtTolerance.Text != tolStr)
+                {
+                    _isUpdatingTextProgrammatically = true;
+                    _txtTolerance.Text = tolStr;
+                    ForceControlRefresh(_txtTolerance);
+                    _isUpdatingTextProgrammatically = false;
+                }
+
+                ConformSrfOptions.Tolerance = tol;
                 _txtTolerance.BackgroundColor = Colors.White;
             }
             else { _txtTolerance.BackgroundColor = Colors.LightPink; allValid = false; }
 
+            double pd = _stepPercentDomain.Value;
+            if (pd > 50.0) pd = 50.0;
+            if (pd < 0.01) pd = 0.01;
+            if (_stepPercentDomain.Value != pd)
+            {
+                _isUpdatingTextProgrammatically = true;
+                _stepPercentDomain.Value = pd;
+                ForceControlRefresh(_stepPercentDomain);
+                _isUpdatingTextProgrammatically = false;
+            }
+            ConformSrfOptions.PercentOfDomain = pd;
+
+            double stiff = _stepEnergyStiffness.Value;
+            if (stiff > 10) stiff = 10;
+            if (stiff < -10) stiff = -10;
+            if (_stepEnergyStiffness.Value != stiff)
+            {
+                _isUpdatingTextProgrammatically = true;
+                _stepEnergyStiffness.Value = stiff;
+                ForceControlRefresh(_stepEnergyStiffness);
+                _isUpdatingTextProgrammatically = false;
+            }
+            ConformSrfOptions.EnergyStiffnessExponent = (int)stiff;
+
+            double timeo = _stepTimeout.Value;
+            if (timeo > 60.0) timeo = 60.0;
+            if (timeo < 0.1) timeo = 0.1;
+            if (_stepTimeout.Value != timeo)
+            {
+                _isUpdatingTextProgrammatically = true;
+                _stepTimeout.Value = timeo;
+                ForceControlRefresh(_stepTimeout);
+                _isUpdatingTextProgrammatically = false;
+            }
+            ConformSrfOptions.SolverTimeout = timeo;
+
             if (!allValid)
             {
-                _btnSolve.Enabled = true;
+                _btnSolve.Enabled = false;
                 _btnSolve.Text = "Solve";
-                _btnSolve.TextColor = Colors.Red;
+                _btnSolve.TextColor = Colors.Gray;
                 _lblProcessedCount.Text = "Invalid parameter entered.";
                 _lblProcessedCount.TextColor = SystemColors.ControlText;
                 _lblMaxDev.Text = "";
                 return;
             }
 
-            FitSrfToTargetOptions.MappingDirection = _dropMappingDirection.SelectedIndex == 0 ? 0 : 1;
-            FitSrfToTargetOptions.FlipDirection = _dropMappingDirection.SelectedIndex == 2;
-            FitSrfToTargetOptions.SolverType = _dropSolverType.SelectedIndex;
-            FitSrfToTargetOptions.SamplingMode = _dropSamplingMode.SelectedIndex;
-            FitSrfToTargetOptions.WeightCurve = _dropWeightCurve.SelectedIndex;
-            FitSrfToTargetOptions.PercentOfDomain = _stepPercentDomain.Value;
-            FitSrfToTargetOptions.EnergyStiffnessExponent = (int)_stepEnergyStiffness.Value;
-            FitSrfToTargetOptions.Constrain1D = _chkConstrain1D.Checked ?? true;
-            FitSrfToTargetOptions.SolverTimeout = _stepTimeout.Value;
+            ConformSrfOptions.MappingDirection = _dropMappingDirection.SelectedIndex == 0 ? 0 : 1;
+            ConformSrfOptions.FlipDirection = _dropMappingDirection.SelectedIndex == 2;
+            ConformSrfOptions.SolverType = _dropSolverType.SelectedIndex;
+            ConformSrfOptions.SamplingMode = _dropSamplingMode.SelectedIndex;
+            ConformSrfOptions.WeightCurve = _dropWeightCurve.SelectedIndex;
+            ConformSrfOptions.UseStiffness = _chkUseStiffness.Checked ?? false;
+            ConformSrfOptions.Constrain1D = _chkConstrain1D.Checked ?? true;
 
-            string cacheKey = $"{FitSrfToTargetOptions.MappingDirection}_{FitSrfToTargetOptions.FlipDirection}_{FitSrfToTargetOptions.SolverType}_{FitSrfToTargetOptions.SolverTimeout}_{FitSrfToTargetOptions.EnergyStiffnessExponent}_{FitSrfToTargetOptions.Constrain1D}_{FitSrfToTargetOptions.SamplingMode}_{FitSrfToTargetOptions.WeightCurve}_{FitSrfToTargetOptions.PercentOfDomain}";
+            double timeout = ConformSrfOptions.SolverTimeout;
+            string cacheKey = $"{ConformSrfOptions.MappingDirection}_{ConformSrfOptions.FlipDirection}_{ConformSrfOptions.SolverType}_{ConformSrfOptions.UseStiffness}_{ConformSrfOptions.EnergyStiffnessExponent}_{ConformSrfOptions.Constrain1D}_{ConformSrfOptions.SamplingMode}_{ConformSrfOptions.WeightCurve}_{ConformSrfOptions.PercentOfDomain}";
             int expectedCount = _startingSrfRefs.Count;
 
             if (_previewCache.TryGetValue(cacheKey, out var cachedData))
             {
                 double oldMaxDev = cachedData.Item3;
                 double oldTol = cachedData.Item4;
-                bool canReuse = false;
+                double oldTimeout = cachedData.Item5;
+                double maxElapsed = cachedData.Item6;
+                bool allConverged = cachedData.Item7;
+                
+                bool timeReuse = false;
+                bool finishedNaturally = allConverged || (maxElapsed < oldTimeout);
 
-                if (oldMaxDev <= tol) canReuse = true; 
-                else if (tol >= oldTol) canReuse = true; 
+                if (oldTimeout == timeout) timeReuse = true;
+                else if (finishedNaturally && timeout >= maxElapsed) timeReuse = true;
 
-                if (canReuse)
+                bool tolReuse = false;
+                int solverType = ConformSrfOptions.SolverType;
+                
+                if (solverType == 0 || solverType == 3) 
+                {
+                    tolReuse = true; 
+                }
+                else
+                {
+                    if (oldTol == tol) tolReuse = true;
+                    else if (oldMaxDev <= tol) tolReuse = true; 
+                    else if (tol >= oldTol) tolReuse = true; 
+                }
+
+                if (timeReuse && tolReuse)
                 {
                     Results = cachedData.Item1;
+                    _previewCache[cacheKey] = (Results, cachedData.Item2, oldMaxDev, tol, timeout, maxElapsed, allConverged);
+                    
                     _conduit.PreviewSurfaces = ResultSurfaces;
                     _conduit.PreviewBreps = ResultSurfaces != null ? ResultSurfaces.Select(s => s?.ToBrep()).ToList() : new List<Brep>();
                     
                     UpdateErrorLineFilter(tol);
-                    _conduit.ShowErrorLines = FitSrfToTargetOptions.ShowErrorLines;
+                    _conduit.ShowErrorLines = ConformSrfOptions.ShowErrorLines;
 
-                    int cachedMisses = ResultSurfaces.Count(s => s == null);
+                    int cachedMisses = ResultSurfaces != null ? ResultSurfaces.Count(s => s == null) : 0;
                     if (cachedMisses == expectedCount && expectedCount > 0)
                     {
-                        _conduit.PreviewSurfaces.Clear();
-                        _conduit.PreviewBreps.Clear();
+                        _conduit.PreviewSurfaces?.Clear();
+                        _conduit.PreviewBreps?.Clear();
                     }
 
-                    ClearPreviewPending(expectedCount, cachedMisses, oldMaxDev, FitSrfToTargetOptions.SolverType, tol);
+                    ClearPreviewPending(expectedCount, cachedMisses, oldMaxDev, ConformSrfOptions.SolverType, tol);
                     UpdateConduitColors();
+                    
+                    if (Results != null)
+                    {
+                        string solverName = "";
+                        if (solverType == 0) solverName = "Direct control point";
+                        else if (solverType == 1) solverName = "Direct Greville";
+                        else if (solverType == 2) solverName = "Weighted / relaxed";
+                        else if (solverType == 3) solverName = ConformSrfOptions.UseStiffness ? "Energy minimization" : "Global least squares";
+
+                        foreach(var r in Results)
+                        {
+                            if (r != null && !string.IsNullOrEmpty(r.Message))
+                            {
+                                string status = "";
+                                if (r.MaxDeviation > tol)
+                                {
+                                    status = $" <- {r.StopReason}";
+                                }
+                                RhinoApp.WriteLine($"{solverName}: {r.Message}{status}");
+                            }
+                        }
+                    }
+
                     RhinoDoc.ActiveDoc.Views.Redraw();
                     return;
                 }
@@ -667,47 +895,62 @@ namespace CADacombs.Commands.Modeling
             {
                 List<string> messages = null;
                 double maxDev = 0;
+                bool wasCanceled = false;
 
                 await Task.Run(() => 
                 {
-                    Results = FitSrfToTargetLogic.ComputeFitSurfacesCore(tBreps, tMeshes, startSrfs, docTol, out messages, out maxDev, progressCallback, checkCancel);
+                    try
+                    {
+                        Results = ConformSrfLogic.ComputeFitSurfacesCore(tBreps, tMeshes, startSrfs, docTol, out messages, out maxDev, progressCallback, checkCancel);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        wasCanceled = true;
+                    }
                 });
                 
-                _conduit.PreviewSurfaces = ResultSurfaces;
-                _conduit.PreviewBreps = ResultSurfaces != null ? ResultSurfaces.Select(s => s?.ToBrep()).ToList() : new List<Brep>();
-                
-                UpdateErrorLineFilter(tol);
-                _conduit.ShowErrorLines = FitSrfToTargetOptions.ShowErrorLines;
-
-                int mCount = ResultSurfaces.Count(s => s == null);
-                if (mCount == expectedCount && expectedCount > 0)
+                if (wasCanceled)
                 {
-                    _conduit.PreviewSurfaces.Clear();
-                    _conduit.PreviewBreps.Clear();
+                    _btnSolve.Enabled = true;
+                    _btnSolve.Text = "Solve";
+                    _btnSolve.TextColor = Colors.Red;
+                    _lblProcessedCount.Text = "The solver was canceled.";
+                    _lblProcessedCount.TextColor = Colors.DarkRed;
+                    _lblMaxDev.Text = "";
+                    ClearPreview();
                 }
-
-                ClearPreviewPending(expectedCount, mCount, maxDev, FitSrfToTargetOptions.SolverType, tol);
-
-                foreach (var msg in messages)
+                else
                 {
-                    if (!string.IsNullOrEmpty(msg)) RhinoApp.WriteLine(msg);
-                }
+                    _conduit.PreviewSurfaces = ResultSurfaces;
+                    _conduit.PreviewBreps = ResultSurfaces != null ? ResultSurfaces.Select(s => s?.ToBrep()).ToList() : new List<Brep>();
+                    
+                    UpdateErrorLineFilter(tol);
+                    _conduit.ShowErrorLines = ConformSrfOptions.ShowErrorLines;
 
-                _previewCache[cacheKey] = (Results, messages, maxDev, tol);
-                
-                UpdateConduitColors();
-                RhinoDoc.ActiveDoc.Views.Redraw();
-            }
-            catch (OperationCanceledException)
-            {
-                _previewPending = true;
-                _btnSolve.Enabled = true;
-                _btnSolve.Text = "Solve";
-                _btnSolve.TextColor = Colors.Red;
-                _lblProcessedCount.Text = "The solver was canceled.";
-                _lblProcessedCount.TextColor = Colors.DarkRed;
-                _lblMaxDev.Text = "";
-                ClearPreview();
+                    int mCount = ResultSurfaces != null ? ResultSurfaces.Count(s => s == null) : 0;
+                    if (mCount == expectedCount && expectedCount > 0)
+                    {
+                        _conduit.PreviewSurfaces?.Clear();
+                        _conduit.PreviewBreps?.Clear();
+                    }
+
+                    ClearPreviewPending(expectedCount, mCount, maxDev, ConformSrfOptions.SolverType, tol);
+
+                    if (messages != null)
+                    {
+                        foreach (var msg in messages)
+                        {
+                            if (!string.IsNullOrEmpty(msg)) RhinoApp.WriteLine(msg);
+                        }
+                    }
+
+                    double maxElapsed = Results != null && Results.Any(r => r != null) ? Results.Max(r => r?.ElapsedSeconds ?? 0) : 0;
+                    bool allConverged = Results != null && Results.All(r => r == null || r.Converged);
+                    _previewCache[cacheKey] = (Results, messages, maxDev, tol, timeout, maxElapsed, allConverged);
+                    
+                    UpdateConduitColors();
+                    RhinoDoc.ActiveDoc.Views.Redraw();
+                }
             }
             finally
             {

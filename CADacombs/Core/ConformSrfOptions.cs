@@ -3,7 +3,7 @@ using Rhino;
 
 namespace CADacombs.Core
 {
-    public static class FitSrfToTargetOptions
+    public static class ConformSrfOptions
     {
         public static bool HasRunBefore { get; set; } = false;
         public static uint LastDocSerialNumber { get; set; } = 0;
@@ -15,11 +15,14 @@ namespace CADacombs.Core
         public static int MappingDirection { get; set; } = 0; 
         public static bool FlipDirection { get; set; } = false;
         
-        public static int SolverType { get; set; } = 2; 
+        // 0: Direct CP, 1: Direct Greville, 2: Weighted / relaxed, 3: Global least squares
+        public static int SolverType { get; set; } = 3; 
 
         public static int SamplingMode { get; set; } = 0; 
         public static int WeightCurve { get; set; } = 2; 
         public static double PercentOfDomain { get; set; } = 5.0;
+        
+        public static bool UseStiffness { get; set; } = false;
         public static int EnergyStiffnessExponent { get; set; } = -2; 
         public static bool Constrain1D { get; set; } = true; 
         

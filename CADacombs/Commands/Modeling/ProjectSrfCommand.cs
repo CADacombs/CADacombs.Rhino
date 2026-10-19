@@ -12,14 +12,10 @@ namespace CADacombs.Commands.Modeling
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            DrapeOptions.HasRunBefore = true; 
-            DrapeOptions.UserProvidesStartingSrf = true;
-            DrapeOptions.FlattenStartingSrf = false; 
+            ConformSrfOptions.MappingDirection = 1; // Z-axis raycast
+            ConformSrfOptions.Constrain1D = true;   // Force 1D vertical displacement
 
-            if (DrapeOptions.FitMethod < 2) 
-                DrapeOptions.FitMethod = 2; 
-
-            return DrapeCommand.RunSharedCommand(doc, mode, DrapeCommandMode.Project);
+            return ConformSrfCommand.RunSharedCommand(doc, mode);
         }
     }
 }

@@ -10,7 +10,7 @@ using CADacombs.Core.Reporting;
 
 namespace CADacombs.Commands.Modeling
 {
-    public static class FitSrfToTargetLogic
+    public static class ConformSrfLogic
     {
         private static EscapeTracker _escapeTracker;
         private static Func<bool> _cancelToken;
@@ -37,25 +37,25 @@ namespace CADacombs.Commands.Modeling
                 if (results[i] == null || results[i].Surface == null) continue;
                 var ns = results[i].Surface;
 
-                bool doReplace = FitSrfToTargetOptions.DeleteStartingSrf && startingSrfRefs != null && i < startingSrfRefs.Count;
+                bool doReplace = ConformSrfOptions.DeleteStartingSrf && startingSrfRefs != null && i < startingSrfRefs.Count;
 
                 if (doReplace)
                 {
                     Guid idToReplace = startingSrfRefs[i].ObjectId;
                     doc.Objects.Replace(idToReplace, ns);
                     
-                    if (FitSrfToTargetOptions.OutputLayer != 0) 
+                    if (ConformSrfOptions.OutputLayer != 0) 
                     {
                         var rhObj = doc.Objects.FindId(idToReplace);
                         if (rhObj != null)
                         {
                             var modAttr = rhObj.Attributes.Duplicate();
-                            if (FitSrfToTargetOptions.OutputLayer == 1)
+                            if (ConformSrfOptions.OutputLayer == 1)
                             {
                                 modAttr.LayerIndex = doc.Layers.CurrentLayerIndex;
                                 modAttr.ColorSource = ObjectColorSource.ColorFromLayer;
                             }
-                            else if (FitSrfToTargetOptions.OutputLayer == 2 && targetRefs != null && targetRefs.Length > 0 && targetRefs[0].Object() != null)
+                            else if (ConformSrfOptions.OutputLayer == 2 && targetRefs != null && targetRefs.Length > 0 && targetRefs[0].Object() != null)
                             {
                                 var tgtAttr = targetRefs[0].Object().Attributes;
                                 modAttr.LayerIndex = tgtAttr.LayerIndex;
@@ -69,14 +69,14 @@ namespace CADacombs.Commands.Modeling
                 else
                 {
                     var attr = new ObjectAttributes();
-                    if (FitSrfToTargetOptions.OutputLayer == 0 && startingSrfRefs != null && i < startingSrfRefs.Count && startingSrfRefs[i].Object() != null)
+                    if (ConformSrfOptions.OutputLayer == 0 && startingSrfRefs != null && i < startingSrfRefs.Count && startingSrfRefs[i].Object() != null)
                     {
                         var srcAttr = startingSrfRefs[i].Object().Attributes;
                         attr.LayerIndex = srcAttr.LayerIndex;
                         attr.ColorSource = srcAttr.ColorSource;
                         attr.ObjectColor = srcAttr.ObjectColor;
                     }
-                    else if (FitSrfToTargetOptions.OutputLayer == 2 && targetRefs != null && targetRefs.Length > 0 && targetRefs[0].Object() != null)
+                    else if (ConformSrfOptions.OutputLayer == 2 && targetRefs != null && targetRefs.Length > 0 && targetRefs[0].Object() != null)
                     {
                         var tgtAttr = targetRefs[0].Object().Attributes;
                         attr.LayerIndex = tgtAttr.LayerIndex;
@@ -92,12 +92,12 @@ namespace CADacombs.Commands.Modeling
                     doc.Objects.AddSurface(ns, attr);
                 }
 
-                if (FitSrfToTargetOptions.AddErrorLines && results[i].ErrorLines != null && results[i].ErrorLines.Count > 0)
+                if (ConformSrfOptions.AddErrorLines && results[i].ErrorLines != null && results[i].ErrorLines.Count > 0)
                 {
-                    var toBake = results[i].ErrorLines.Where(l => l.Length > FitSrfToTargetOptions.Tolerance).Take(100).ToList();
+                    var toBake = results[i].ErrorLines.Where(l => l.Length > ConformSrfOptions.Tolerance).Take(100).ToList();
                     foreach (var l in toBake) doc.Objects.AddLine(l, attrRed);
                     
-                    if (results[i].MaxErrorLine.IsValid && results[i].MaxDeviation > FitSrfToTargetOptions.Tolerance)
+                    if (results[i].MaxErrorLine.IsValid && results[i].MaxDeviation > ConformSrfOptions.Tolerance)
                     {
                         int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
                         string label = $"Max: {FormatUtils.FormatDistance(results[i].MaxDeviation, prec)}";
@@ -174,7 +174,14 @@ namespace CADacombs.Commands.Modeling
 
                 int totalSurfaces = startingSrfs.Count;
                 int totalMisses = 0;
-                Vector3d rayDir = FitSrfToTargetOptions.FlipDirection ? Vector3d.ZAxis : -Vector3d.ZAxis;
+                Vector3d rayDir = ConformSrfOptions.FlipDirection ? Vector3d.ZAxis : -Vector3d.ZAxis;
+                
+                int solverType = ConformSrfOptions.SolverType;
+                string solverName = "";
+                if (solverType == 0) solverName = "Direct control point";
+                else if (solverType == 1) solverName = "Direct Greville";
+                else if (solverType == 2) solverName = "Weighted / relaxed";
+                else if (solverType == 3) solverName = ConformSrfOptions.UseStiffness ? "Energy minimization" : "Global least squares";
 
                 for (int i = 0; i < totalSurfaces; i++)
                 {
@@ -187,10 +194,9 @@ namespace CADacombs.Commands.Modeling
                     }
 
                     ProjectionResult res = null;
-                    int solverType = FitSrfToTargetOptions.SolverType;
-                    int mappingDirection = FitSrfToTargetOptions.MappingDirection;
+                    int mappingDirection = ConformSrfOptions.MappingDirection;
                     
-                    bool effectiveConstrain1D = FitSrfToTargetOptions.Constrain1D && (mappingDirection == 1);
+                    bool effectiveConstrain1D = ConformSrfOptions.Constrain1D && (mappingDirection == 1);
 
                     if (solverType == 0 || solverType == 1)
                     {
@@ -218,22 +224,25 @@ namespace CADacombs.Commands.Modeling
                         }
 
                         if (solverType == 0)
-                            res = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, progressCallback);
+                            res = ProjectionMath.FitDirectControlPoints(targetPts, nsWIP, targetBreps, targetMeshes, ConformSrfOptions.Tolerance, progressCallback);
                         else
-                            res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
+                            res = ProjectionMath.FitDirectGreville(targetPts, nsWIP, targetBreps, targetMeshes, ConformSrfOptions.Tolerance, ConformSrfOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
                     }
                     else if (solverType == 2)
                     {
-                        res = ProjectionMath.FitWeightedRelaxed(nsWIP, targetBreps, targetMeshes, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
+                        res = ProjectionMath.FitWeightedRelaxed(nsWIP, targetBreps, targetMeshes, effectiveConstrain1D, ConformSrfOptions.Tolerance, ConformSrfOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
                     }
                     else if (solverType == 3)
                     {
-                        res = ProjectionMath.FitGlobalLeastSquares(nsWIP, targetBreps, targetMeshes, effectiveConstrain1D, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
-                    }
-                    else if (solverType == 4)
-                    {
-                        double stiffness = Math.Pow(10, FitSrfToTargetOptions.EnergyStiffnessExponent);
-                        res = ProjectionMath.FitEnergyMinimization(nsWIP, targetBreps, targetMeshes, stiffness, effectiveConstrain1D, FitSrfToTargetOptions.Tolerance, FitSrfToTargetOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
+                        if (ConformSrfOptions.UseStiffness)
+                        {
+                            double stiffness = Math.Pow(10, ConformSrfOptions.EnergyStiffnessExponent);
+                            res = ProjectionMath.FitEnergyMinimization(nsWIP, targetBreps, targetMeshes, stiffness, effectiveConstrain1D, ConformSrfOptions.Tolerance, ConformSrfOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
+                        }
+                        else
+                        {
+                            res = ProjectionMath.FitGlobalLeastSquares(nsWIP, targetBreps, targetMeshes, effectiveConstrain1D, ConformSrfOptions.Tolerance, ConformSrfOptions.SolverTimeout, CheckEscapeDelegate, progressCallback);
+                        }
                     }
 
                     if (res != null)
@@ -247,7 +256,22 @@ namespace CADacombs.Commands.Modeling
                         }
 
                         maxDeviation = Math.Max(maxDeviation, res.MaxDeviation);
-                        if (!string.IsNullOrEmpty(res.Message)) messages.Add(res.Message);
+                        if (!string.IsNullOrEmpty(res.Message)) 
+                        {
+                            if (res.Message.Contains("Matrix math failed") || res.Message.Contains("misses the targets"))
+                            {
+                                messages.Add($"{solverName}: {res.Message}");
+                            }
+                            else
+                            {
+                                string status = "";
+                                if (res.MaxDeviation > ConformSrfOptions.Tolerance)
+                                {
+                                    status = $" <- {res.StopReason}";
+                                }
+                                messages.Add($"{solverName}: {res.Message}{status}");
+                            }
+                        }
                         outResults.Add(res);
                     }
                     else
