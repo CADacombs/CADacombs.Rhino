@@ -49,24 +49,49 @@ namespace CADacombs.Core.Curves
             if (modT1 == refT1) tanTarget.Reverse();
 
             var candidates = new List<NurbsCurve>();
-            NurbsCurve ncWip = (NurbsCurve)ncMod.Duplicate();
 
-            if (continuity == 0) // Position
+            if (continuity == 0) // Position[cite: 4]
             {
-                if (modT1) ncWip.SetEndPoint(ptTarget);
-                else ncWip.SetStartPoint(ptTarget);
-                candidates.Add(ncWip);
+                int idxCpPosOne = modT1 ? ncMod.Points.Count - 1 : 0;
+                int idxCpPosRef = refT1 ? ncRef.Points.Count - 1 : 0;
+
+                // Cand 1: Move only the end control point[cite: 4]
+                NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
+                cand1.Points.SetPoint(idxCpPosOne, ncRef.Points[idxCpPosRef].Location);
+                candidates.Add(cand1);
+
+                // Cand 2: Use SetStartPoint/SetEndPoint[cite: 4]
+                NurbsCurve cand2 = (NurbsCurve)ncMod.Duplicate();
+                if (modT1) cand2.SetEndPoint(ncRef.Points[idxCpPosRef].Location);
+                else cand2.SetStartPoint(ncRef.Points[idxCpPosRef].Location);
+                candidates.Add(cand2);
             }
-            else if (continuity == 1) // Tangency
+            else if (continuity == 1) // Tangency[cite: 4]
             {
-                ncWip.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptTarget, tanTarget);
-                candidates.Add(ncWip);
+                int idxCpPosOne = modT1 ? ncMod.Points.Count - 1 : 0;
+                int idxCpTanOne = modT1 ? ncMod.Points.Count - 2 : 1;
+                int idxCpPosRef = refT1 ? ncRef.Points.Count - 1 : 0;
+                int idxCpTanRef = refT1 ? ncRef.Points.Count - 2 : 1;
+
+                // Cand 1: ClosestPoint on tangency line[cite: 4]
+                NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
+                cand1.Points.SetPoint(idxCpPosOne, ncRef.Points[idxCpPosRef].Location);
+                Line tanLine = new Line(ncRef.Points[idxCpPosRef].Location, ncRef.Points[idxCpTanRef].Location);
+                Point3d ptTargetTan = tanLine.ClosestPoint(cand1.Points[idxCpTanOne].Location, false);
+                cand1.Points.SetPoint(idxCpTanOne, ptTargetTan);
+                candidates.Add(cand1);
+
+                // Cand 2: SetEndCondition[cite: 4]
+                NurbsCurve cand2 = (NurbsCurve)ncMod.Duplicate();
+                cand2.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptTarget, tanTarget);
+                candidates.Add(cand2);
             }
-            else if (continuity == 2) // Curvature
+            else if (continuity == 2) // Curvature[cite: 4]
             {
+                NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
                 Vector3d curvTarget = ncRef.CurvatureAt(tRef);
-                ncWip.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptTarget, tanTarget, curvTarget);
-                candidates.Add(ncWip);
+                cand1.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptTarget, tanTarget, curvTarget);
+                candidates.Add(cand1);
             }
 
             if (maximizeMinRadius && continuity < 2)
@@ -98,6 +123,7 @@ namespace CADacombs.Core.Curves
 
                 if (maximizeMinRadius)
                 {
+                    // Python script uses min radius comparison for the winner when maximized[cite: 4]
                     if (radVal > bestRadius)
                     {
                         bestRadius = radVal;
@@ -108,6 +134,7 @@ namespace CADacombs.Core.Curves
                 }
                 else
                 {
+                    // Python script defaults to min deviation[cite: 4]
                     if (dev < bestDev)
                     {
                         bestDev = dev;
@@ -172,23 +199,30 @@ namespace CADacombs.Core.Curves
             double tA = modT1_A ? ncWipA.Domain.T1 : ncWipA.Domain.T0;
             double tB = modT1_B ? ncWipB.Domain.T1 : ncWipB.Domain.T0;
 
+            // EVALUATE ORIGINAL VECTORS BEFORE ANY DEFORMATION
             Point3d ptA = modT1_A ? ncWipA.PointAtEnd : ncWipA.PointAtStart;
             Point3d ptB = modT1_B ? ncWipB.PointAtEnd : ncWipB.PointAtStart;
             Point3d ptAvg = (Point3d)(0.5 * (Vector3d)ptA + 0.5 * (Vector3d)ptB);
 
+            Vector3d tanA = ncWipA.TangentAt(tA);
+            Vector3d tanB = ncWipB.TangentAt(tB);
+            
+            Vector3d curvA = ncWipA.CurvatureAt(tA);
+            Vector3d curvB = ncWipB.CurvatureAt(tB);
+
             if (continuity >= 0)
             {
-                if (modT1_A) ncWipA.SetEndPoint(ptAvg); else ncWipA.SetStartPoint(ptAvg);
-                if (modT1_B) ncWipB.SetEndPoint(ptAvg); else ncWipB.SetStartPoint(ptAvg);
+                // Explicitly move only the end control point to match Python logic
+                int idxCpPosA = modT1_A ? ncWipA.Points.Count - 1 : 0;
+                int idxCpPosB = modT1_B ? ncWipB.Points.Count - 1 : 0;
+                
+                ncWipA.Points.SetPoint(idxCpPosA, ptAvg);
+                ncWipB.Points.SetPoint(idxCpPosB, ptAvg);
             }
 
             if (continuity >= 1)
             {
-                Vector3d tanA = ncWipA.TangentAt(tA);
-                Vector3d tanB = ncWipB.TangentAt(tB);
-                
                 Vector3d tanTargetB = modT1_A == modT1_B ? (0.5 * -tanA) + (0.5 * tanB) : (0.5 * tanA) + (0.5 * tanB);
-                tanTargetB.Unitize();
                 Vector3d tanTargetA = modT1_A == modT1_B ? -tanTargetB : tanTargetB;
 
                 ncWipA.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetA);
@@ -206,9 +240,6 @@ namespace CADacombs.Core.Curves
 
             if (continuity >= 2)
             {
-                Vector3d curvA = ncWipA.CurvatureAt(tA);
-                Vector3d curvB = ncWipB.CurvatureAt(tB);
-                
                 Vector3d curvTargetB = modT1_A == modT1_B ? (0.5 * -curvA) + (0.5 * curvB) : (0.5 * curvA) + (0.5 * curvB);
                 Vector3d curvTargetA = modT1_A == modT1_B ? -curvTargetB : curvTargetB;
 
