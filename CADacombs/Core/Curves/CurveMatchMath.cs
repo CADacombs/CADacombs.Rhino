@@ -16,8 +16,8 @@ namespace CADacombs.Core.Curves
             int continuity, 
             int preserveOtherEnd, 
             bool deformLines, 
-            bool maximizeMinRadius, 
-            double devTol)
+            double devTol,
+            bool debug = false)
         {
             NurbsCurve ncMod = crvToMod.ToNurbsCurve();
             NurbsCurve ncRef = crvRef.ToNurbsCurve();
@@ -48,100 +48,91 @@ namespace CADacombs.Core.Curves
             Vector3d tanTarget = ncRef.TangentAt(tRef);
             if (modT1 == refT1) tanTarget.Reverse();
 
-            var candidates = new List<NurbsCurve>();
+            var candidates = new List<(NurbsCurve Curve, string Desc)>();
 
-            if (continuity == 0) // Position[cite: 4]
+            if (continuity == 0) // Position
             {
                 int idxCpPosOne = modT1 ? ncMod.Points.Count - 1 : 0;
                 int idxCpPosRef = refT1 ? ncRef.Points.Count - 1 : 0;
 
-                // Cand 1: Move only the end control point[cite: 4]
                 NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
                 cand1.Points.SetPoint(idxCpPosOne, ncRef.Points[idxCpPosRef].Location);
-                candidates.Add(cand1);
+                candidates.Add((cand1, "Position: Move P0 Only"));
 
-                // Cand 2: Use SetStartPoint/SetEndPoint[cite: 4]
                 NurbsCurve cand2 = (NurbsCurve)ncMod.Duplicate();
                 if (modT1) cand2.SetEndPoint(ncRef.Points[idxCpPosRef].Location);
                 else cand2.SetStartPoint(ncRef.Points[idxCpPosRef].Location);
-                candidates.Add(cand2);
+                candidates.Add((cand2, "Position: SetEndCondition"));
             }
-            else if (continuity == 1) // Tangency[cite: 4]
+            else if (continuity == 1) // Tangency
             {
                 int idxCpPosOne = modT1 ? ncMod.Points.Count - 1 : 0;
                 int idxCpTanOne = modT1 ? ncMod.Points.Count - 2 : 1;
                 int idxCpPosRef = refT1 ? ncRef.Points.Count - 1 : 0;
                 int idxCpTanRef = refT1 ? ncRef.Points.Count - 2 : 1;
 
-                // Cand 1: ClosestPoint on tangency line[cite: 4]
+                // Cand 1: ClosestPoint
                 NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
                 cand1.Points.SetPoint(idxCpPosOne, ncRef.Points[idxCpPosRef].Location);
                 Line tanLine = new Line(ncRef.Points[idxCpPosRef].Location, ncRef.Points[idxCpTanRef].Location);
                 Point3d ptTargetTan = tanLine.ClosestPoint(cand1.Points[idxCpTanOne].Location, false);
-                cand1.Points.SetPoint(idxCpTanOne, ptTargetTan);
-                candidates.Add(cand1);
-
-                // Cand 2: SetEndCondition[cite: 4]
-                NurbsCurve cand2 = (NurbsCurve)ncMod.Duplicate();
-                cand2.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptTarget, tanTarget);
-                candidates.Add(cand2);
-            }
-            else if (continuity == 2) // Curvature[cite: 4]
-            {
-                NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
-                Vector3d curvTarget = ncRef.CurvatureAt(tRef);
-                cand1.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptTarget, tanTarget, curvTarget);
-                candidates.Add(cand1);
-            }
-
-            if (maximizeMinRadius && continuity < 2)
-            {
-                var maximizedCrvs = new List<NurbsCurve>();
-                foreach (var cand in candidates)
+                
+                if (ptTargetTan.DistanceTo(ncRef.Points[idxCpPosRef].Location) > 1e-6)
                 {
-                    var maxRadiusNc = MaximizeMinRadiusOneEnd(cand, modT1, devTol, crvToMod);
-                    if (maxRadiusNc != null) maximizedCrvs.Add(maxRadiusNc);
-                }
-                candidates.AddRange(maximizedCrvs);
-            }
-
-            NurbsCurve winner = null;
-            double bestDev = double.MaxValue;
-            double bestRadius = double.MinValue;
-
-            foreach (var cand in candidates)
-            {
-                double dev = GetMaximumDeviation(crvToMod, cand);
-                if (dev > devTol) 
-                {
-                    cand.Dispose();
-                    continue;
-                }
-
-                double? minRad = RadiusMinimaMath.GetMinimumRadius(cand);
-                double radVal = minRad ?? double.MinValue;
-
-                if (maximizeMinRadius)
-                {
-                    // Python script uses min radius comparison for the winner when maximized[cite: 4]
-                    if (radVal > bestRadius)
-                    {
-                        bestRadius = radVal;
-                        winner?.Dispose();
-                        winner = cand;
-                    }
-                    else cand.Dispose();
+                    cand1.Points.SetPoint(idxCpTanOne, ptTargetTan);
+                    candidates.Add((cand1, "Tangency: ClosestPoint (Slide P1)"));
                 }
                 else
                 {
-                    // Python script defaults to min deviation[cite: 4]
-                    if (dev < bestDev)
-                    {
-                        bestDev = dev;
-                        winner?.Dispose();
-                        winner = cand;
-                    }
-                    else cand.Dispose();
+                    cand1.Dispose();
+                }
+
+                // Cand 2: SetEndCondition (Mathematically identical to _Match for One Curve)
+                NurbsCurve cand2 = (NurbsCurve)ncMod.Duplicate();
+                cand2.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptTarget, tanTarget);
+                candidates.Add((cand2, "Tangency: SetEndCondition"));
+            }
+            else if (continuity == 2) // Curvature
+            {
+                NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
+                cand1.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptTarget, tanTarget, ncRef.CurvatureAt(tRef));
+                candidates.Add((cand1, "Curvature: SetEndCondition"));
+            }
+
+            NurbsCurve winner = null;
+            double bestAvgDev = double.MaxValue;
+
+            if (debug) RhinoApp.WriteLine($"--- MatchOneCurve Candidates Evaluated ({candidates.Count}) ---");
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                var cand = candidates[i];
+                double maxDev = GetMaximumDeviation(crvToMod, cand.Curve);
+                double avgDev = GetAverageDeviation(crvToMod, cand.Curve);
+                double? minRad = RadiusMinimaMath.GetMinimumRadius(cand.Curve);
+                
+                int idxPos = modT1 ? cand.Curve.Points.Count - 1 : 0;
+                int idxTan = modT1 ? cand.Curve.Points.Count - 2 : 1;
+                double p0p1Dist = continuity > 0 ? cand.Curve.Points[idxPos].Location.DistanceTo(cand.Curve.Points[idxTan].Location) : 0;
+
+                if (debug) 
+                    RhinoApp.WriteLine($" {cand.Desc}\n    AvgDev: {avgDev:F6} | MaxDev: {maxDev:F6} | MinRad: {(minRad.HasValue ? minRad.Value.ToString("F6") : "N/A")} | P0-P1 Dist: {p0p1Dist:F6}");
+
+                if (maxDev > devTol) 
+                {
+                    cand.Curve.Dispose();
+                    continue;
+                }
+
+                if (avgDev < bestAvgDev)
+                {
+                    bestAvgDev = avgDev;
+                    winner?.Dispose();
+                    winner = cand.Curve;
+                }
+                else
+                {
+                    cand.Curve.Dispose();
                 }
             }
 
@@ -165,8 +156,8 @@ namespace CADacombs.Core.Curves
             int continuity, 
             int preserveOtherEnd, 
             bool deformLines, 
-            bool maximizeMinRadius, 
-            double devTol)
+            double devTol,
+            bool debug = false)
         {
             NurbsCurve ncWipA = crvA.ToNurbsCurve();
             NurbsCurve ncWipB = crvB.ToNurbsCurve();
@@ -199,158 +190,144 @@ namespace CADacombs.Core.Curves
             double tA = modT1_A ? ncWipA.Domain.T1 : ncWipA.Domain.T0;
             double tB = modT1_B ? ncWipB.Domain.T1 : ncWipB.Domain.T0;
 
-            // EVALUATE ORIGINAL VECTORS BEFORE ANY DEFORMATION
+            int idxCpPosA = modT1_A ? ncWipA.Points.Count - 1 : 0;
+            int idxCpPosB = modT1_B ? ncWipB.Points.Count - 1 : 0;
+            int idxCpTanA = modT1_A ? ncWipA.Points.Count - 2 : 1;
+            int idxCpTanB = modT1_B ? ncWipB.Points.Count - 2 : 1;
+
+            double trueOrigDistA = ncWipA.Points.Count > 1 ? ncWipA.Points[idxCpPosA].Location.DistanceTo(ncWipA.Points[idxCpTanA].Location) : 0;
+            double trueOrigDistB = ncWipB.Points.Count > 1 ? ncWipB.Points[idxCpPosB].Location.DistanceTo(ncWipB.Points[idxCpTanB].Location) : 0;
+
             Point3d ptA = modT1_A ? ncWipA.PointAtEnd : ncWipA.PointAtStart;
             Point3d ptB = modT1_B ? ncWipB.PointAtEnd : ncWipB.PointAtStart;
             Point3d ptAvg = (Point3d)(0.5 * (Vector3d)ptA + 0.5 * (Vector3d)ptB);
 
             Vector3d tanA = ncWipA.TangentAt(tA);
             Vector3d tanB = ncWipB.TangentAt(tB);
-            
             Vector3d curvA = ncWipA.CurvatureAt(tA);
             Vector3d curvB = ncWipB.CurvatureAt(tB);
 
-            if (continuity >= 0)
-            {
-                // Explicitly move only the end control point to match Python logic
-                int idxCpPosA = modT1_A ? ncWipA.Points.Count - 1 : 0;
-                int idxCpPosB = modT1_B ? ncWipB.Points.Count - 1 : 0;
-                
-                ncWipA.Points.SetPoint(idxCpPosA, ptAvg);
-                ncWipB.Points.SetPoint(idxCpPosB, ptAvg);
-            }
+            var candidates = new List<(NurbsCurve CandA, NurbsCurve CandB, string Desc)>();
 
-            if (continuity >= 1)
+            if (continuity == 0)
+            {
+                NurbsCurve candA = (NurbsCurve)ncWipA.Duplicate();
+                NurbsCurve candB = (NurbsCurve)ncWipB.Duplicate();
+                candA.Points.SetPoint(idxCpPosA, ptAvg);
+                candB.Points.SetPoint(idxCpPosB, ptAvg);
+                candidates.Add((candA, candB, "Both Position: Move P0"));
+            }
+            else if (continuity == 1)
             {
                 Vector3d tanTargetB = modT1_A == modT1_B ? (0.5 * -tanA) + (0.5 * tanB) : (0.5 * tanA) + (0.5 * tanB);
                 Vector3d tanTargetA = modT1_A == modT1_B ? -tanTargetB : tanTargetB;
 
-                ncWipA.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetA);
-                ncWipB.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetB);
+                // Cand 1: ClosestPoint
+                NurbsCurve cand1A = (NurbsCurve)ncWipA.Duplicate();
+                NurbsCurve cand1B = (NurbsCurve)ncWipB.Duplicate();
+                cand1A.Points.SetPoint(idxCpPosA, ptAvg);
+                cand1B.Points.SetPoint(idxCpPosB, ptAvg);
+                Line tanLine = new Line(ptAvg, ptAvg + tanTargetB);
                 
-                if (maximizeMinRadius && continuity < 2)
-                {
-                    var maxA = MaximizeMinRadiusOneEnd(ncWipA, modT1_A, devTol, crvA);
-                    if (maxA != null) { ncWipA.Dispose(); ncWipA = maxA; }
-                    
-                    var maxB = MaximizeMinRadiusOneEnd(ncWipB, modT1_B, devTol, crvB);
-                    if (maxB != null) { ncWipB.Dispose(); ncWipB = maxB; }
-                }
-            }
+                Point3d ptTanA = tanLine.ClosestPoint(cand1A.Points[idxCpTanA].Location, false);
+                Point3d ptTanB = tanLine.ClosestPoint(cand1B.Points[idxCpTanB].Location, false);
 
-            if (continuity >= 2)
+                if (ptTanA.DistanceTo(ptAvg) > 1e-6 && ptTanB.DistanceTo(ptAvg) > 1e-6)
+                {
+                    cand1A.Points.SetPoint(idxCpTanA, ptTanA);
+                    cand1B.Points.SetPoint(idxCpTanB, ptTanB);
+                    candidates.Add((cand1A, cand1B, "Both Tangency: ClosestPoint (Slide P1)"));
+                }
+                else
+                {
+                    cand1A.Dispose(); cand1B.Dispose();
+                }
+
+                // Cand 2: SetEndCondition
+                NurbsCurve cand2A = (NurbsCurve)ncWipA.Duplicate();
+                NurbsCurve cand2B = (NurbsCurve)ncWipB.Duplicate();
+                cand2A.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetA);
+                cand2B.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetB);
+                candidates.Add((cand2A, cand2B, "Both Tangency: SetEndCondition"));
+
+                // Cand 3: Preserve orig P0-P1 (Kept for Both because vectors diverge)
+                NurbsCurve cand3A = (NurbsCurve)cand2A.Duplicate();
+                NurbsCurve cand3B = (NurbsCurve)cand2B.Duplicate();
+                
+                Vector3d newDirA = cand3A.Points[idxCpTanA].Location - cand3A.Points[idxCpPosA].Location;
+                Vector3d newDirB = cand3B.Points[idxCpTanB].Location - cand3B.Points[idxCpPosB].Location;
+                newDirA.Unitize(); newDirB.Unitize();
+                
+                cand3A.Points.SetPoint(idxCpTanA, ptAvg + (newDirA * trueOrigDistA));
+                cand3B.Points.SetPoint(idxCpTanB, ptAvg + (newDirB * trueOrigDistB));
+                candidates.Add((cand3A, cand3B, "Both Tangency: Preserve P0-P1 (_Match)"));
+            }
+            else if (continuity == 2)
             {
                 Vector3d curvTargetB = modT1_A == modT1_B ? (0.5 * -curvA) + (0.5 * curvB) : (0.5 * curvA) + (0.5 * curvB);
                 Vector3d curvTargetA = modT1_A == modT1_B ? -curvTargetB : curvTargetB;
 
-                ncWipA.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, ncWipA.TangentAt(tA), curvTargetA);
-                ncWipB.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, ncWipB.TangentAt(tB), curvTargetB);
+                NurbsCurve cand1A = (NurbsCurve)ncWipA.Duplicate();
+                NurbsCurve cand1B = (NurbsCurve)ncWipB.Duplicate();
+                cand1A.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, ncWipA.TangentAt(tA), curvTargetA);
+                cand1B.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, ncWipB.TangentAt(tB), curvTargetB);
+                candidates.Add((cand1A, cand1B, "Both Curvature: SetEndCondition"));
             }
 
-            if (GetMaximumDeviation(crvA, ncWipA) > devTol || GetMaximumDeviation(crvB, ncWipB) > devTol)
+            (NurbsCurve ResultA, NurbsCurve ResultB) winner = (null, null);
+            double bestAvgDevSum = double.MaxValue;
+
+            if (debug) RhinoApp.WriteLine($"--- MatchBothCurves Candidates Evaluated ({candidates.Count}) ---");
+
+            for (int i = 0; i < candidates.Count; i++)
             {
-                ncWipA.Dispose();
-                ncWipB.Dispose();
-                return (null, null);
-            }
+                var candA = candidates[i].CandA;
+                var candB = candidates[i].CandB;
+                string desc = candidates[i].Desc;
 
-            return (ncWipA, ncWipB);
-        }
+                double maxDevA = GetMaximumDeviation(crvA, candA);
+                double maxDevB = GetMaximumDeviation(crvB, candB);
+                double maxDev = Math.Max(maxDevA, maxDevB);
 
-        public static NurbsCurve MaximizeMinRadiusOneEnd(NurbsCurve ncIn, bool isT1, double devTol, Curve refCrvForDev)
-        {
-            int idxG0 = isT1 ? ncIn.Points.Count - 1 : 0;
-            int idxG1 = isT1 ? ncIn.Points.Count - 2 : 1;
-            int idxG2 = isT1 ? ncIn.Points.Count - 3 : 2;
+                double avgDevA = GetAverageDeviation(crvA, candA);
+                double avgDevB = GetAverageDeviation(crvB, candB);
+                double avgDevSum = avgDevA + avgDevB;
 
-            Vector3d vPosToTan = isT1 ? -ncIn.TangentAtEnd : ncIn.TangentAtStart;
-            
-            double distG0toG1 = ncIn.Points[idxG0].Location.DistanceTo(ncIn.Points[idxG1].Location);
-            double distG0toG2 = ncIn.Points[idxG0].Location.DistanceTo(ncIn.Points[idxG2].Location);
+                double radA = RadiusMinimaMath.GetMinimumRadius(candA) ?? double.MinValue;
+                double radB = RadiusMinimaMath.GetMinimumRadius(candB) ?? double.MinValue;
+                double minRad = Math.Min(radA, radB);
 
-            double currentMinRad = RadiusMinimaMath.GetMinimumRadius(ncIn) ?? 0.0;
+                double p0p1A = continuity > 0 ? candA.Points[idxCpPosA].Location.DistanceTo(candA.Points[idxCpTanA].Location) : 0;
+                double p0p1B = continuity > 0 ? candB.Points[idxCpPosB].Location.DistanceTo(candB.Points[idxCpTanB].Location) : 0;
 
-            double epsilonLoc = 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
-            
-            NurbsCurve ncLonger = (NurbsCurve)ncIn.Duplicate();
-            ncLonger.Points.SetPoint(idxG1, ncIn.Points[idxG1].Location + epsilonLoc * vPosToTan);
-            double radLonger = RadiusMinimaMath.GetMinimumRadius(ncLonger) ?? 0.0;
+                if (debug) 
+                    RhinoApp.WriteLine($" {desc}\n    AvgDev Sum: {avgDevSum:F6} (A:{avgDevA:F6}, B:{avgDevB:F6}) | MaxDev: {maxDev:F6} | MinRad: {(minRad != double.MinValue ? minRad.ToString("F6") : "N/A")} | P0-P1 Dist: (A:{p0p1A:F6}, B:{p0p1B:F6})");
 
-            NurbsCurve ncShorter = (NurbsCurve)ncIn.Duplicate();
-            ncShorter.Points.SetPoint(idxG1, ncIn.Points[idxG1].Location - epsilonLoc * vPosToTan);
-            double radShorter = RadiusMinimaMath.GetMinimumRadius(ncShorter) ?? 0.0;
-
-            int dir = 0;
-            if (Math.Abs(currentMinRad - radLonger) < 1e-6 && Math.Abs(currentMinRad - radShorter) < 1e-6) dir = 0;
-            else if (radLonger > currentMinRad) dir = 1;
-            else if (radShorter > currentMinRad) dir = -1;
-
-            if (dir == 0)
-            {
-                ncLonger.Dispose();
-                ncShorter.Dispose();
-                return null;
-            }
-
-            double distL, distH;
-            if (dir == 1)
-            {
-                distL = distG0toG1;
-                distH = 0.99 * distG0toG2;
-            }
-            else
-            {
-                distL = 0.01 * distG0toG2;
-                distH = distG0toG1;
-            }
-
-            NurbsCurve bestCurve = null;
-            
-            while (Math.Abs(distH - distL) > 1e-6)
-            {
-                double distM = 0.5 * (distL + distH);
-                
-                NurbsCurve ncWipM = (NurbsCurve)ncIn.Duplicate();
-                ncWipM.Points.SetPoint(idxG1, ncIn.Points[idxG0].Location + distM * vPosToTan);
-                double radM = RadiusMinimaMath.GetMinimumRadius(ncWipM) ?? 0.0;
-
-                NurbsCurve ncWipL = (NurbsCurve)ncIn.Duplicate();
-                ncWipL.Points.SetPoint(idxG1, ncIn.Points[idxG0].Location + distL * vPosToTan);
-                double radL = RadiusMinimaMath.GetMinimumRadius(ncWipL) ?? 0.0;
-
-                NurbsCurve ncWipH = (NurbsCurve)ncIn.Duplicate();
-                ncWipH.Points.SetPoint(idxG1, ncIn.Points[idxG0].Location + distH * vPosToTan);
-                double radH = RadiusMinimaMath.GetMinimumRadius(ncWipH) ?? 0.0;
-
-                if (Math.Abs(radL - radH) < 1e-6)
+                if (maxDev > devTol) 
                 {
-                    bestCurve = ncWipM;
-                    break;
+                    if (candA != winner.ResultA) candA.Dispose();
+                    if (candB != winner.ResultB) candB.Dispose();
+                    continue;
                 }
 
-                if (radM > radH && radH > radL) distL = distM;
-                else if (radM > radL && radL > radH) distL = distM;
-                else if (radM > radL && radM > radH)
+                if (avgDevSum < bestAvgDevSum)
                 {
-                    NurbsCurve ncMTempLong = (NurbsCurve)ncWipM.Duplicate();
-                    ncMTempLong.Points.SetPoint(idxG1, ncWipM.Points[idxG1].Location + epsilonLoc * vPosToTan);
-                    if ((RadiusMinimaMath.GetMinimumRadius(ncMTempLong) ?? 0) > radM) distL = distM;
-                    else distH = distM;
+                    bestAvgDevSum = avgDevSum;
+                    if (winner.ResultA != null && winner.ResultA != candA) winner.ResultA.Dispose();
+                    if (winner.ResultB != null && winner.ResultB != candB) winner.ResultB.Dispose();
+                    winner = (candA, candB);
                 }
-                else if (radH > radM && radM > radL) distL = distM;
-                else if (radL > radM && radM > radH) distH = distM;
+                else
+                {
+                    candA.Dispose();
+                    candB.Dispose();
+                }
             }
 
-            ncLonger.Dispose();
-            ncShorter.Dispose();
+            ncWipA.Dispose();
+            ncWipB.Dispose();
 
-            if (bestCurve != null)
-            {
-                if (GetMaximumDeviation(refCrvForDev, bestCurve) <= devTol) return bestCurve;
-                bestCurve.Dispose();
-            }
-
-            return null;
+            return winner;
         }
 
         public static double GetMaximumDeviation(Curve a, Curve b)
@@ -361,6 +338,22 @@ namespace CADacombs.Core.Curves
                 return maxDist;
             }
             return double.MaxValue;
+        }
+
+        public static double GetAverageDeviation(Curve original, Curve modified, int sampleCount = 50)
+        {
+            var ts = original.DivideByCount(sampleCount, true);
+            if (ts == null || ts.Length == 0) return double.MaxValue;
+
+            double totalDist = 0.0;
+            foreach (double t in ts)
+            {
+                Point3d ptOrig = original.PointAt(t);
+                modified.ClosestPoint(ptOrig, out double tMod);
+                totalDist += ptOrig.DistanceTo(modified.PointAt(tMod));
+            }
+
+            return totalDist / ts.Length;
         }
     }
 }

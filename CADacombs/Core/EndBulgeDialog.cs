@@ -45,7 +45,7 @@ namespace CADacombs.Core
         public EndBulgeDialog(bool isSurface = false)
         {
             this.isSurface = isSurface;
-            Title = "CADacombs EndBulge";
+            Title = "CADacombs End Bulge";
             
             _exactScalePicked = EndBulgeOptions.ScalePicked;
             _exactScaleOpp = EndBulgeOptions.ScaleOpp;
