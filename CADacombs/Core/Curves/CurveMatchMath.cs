@@ -8,6 +8,53 @@ namespace CADacombs.Core.Curves
 {
     public static class CurveMatchMath
     {
+        // ==============================================================================
+        // BACKWARD COMPATIBILITY OVERLOADS (For older commands/scripts calling this API)
+        // ==============================================================================
+        
+        public static (NurbsCurve Result, string ErrorMsg) MatchOneCurve(
+            Curve crvToMod, Curve crvRef, bool modT1, bool refT1, 
+            int continuity, int preserveOtherEnd, bool deformLines, double devTol, bool debug = false)
+        {
+            return MatchOneCurve(crvToMod, crvRef, modT1, refT1, continuity, preserveOtherEnd, 
+                                 deformLines, false, 2, devTol, false, false, 2, 
+                                 RhinoMath.ZeroTolerance, RhinoMath.ToRadians(1.0), 5.0, debug);
+        }
+
+        public static (NurbsCurve ResultA, NurbsCurve ResultB, string ErrorMsg) MatchBothCurves(
+            Curve crvA, Curve crvB, bool modT1_A, bool modT1_B, 
+            int continuity, int preserveOtherEnd, bool deformLines, double devTol, bool debug = false)
+        {
+            return MatchBothCurves(crvA, crvB, modT1_A, modT1_B, continuity, preserveOtherEnd, 
+                                   deformLines, false, 2, devTol, false, false, 2, 
+                                   RhinoMath.ZeroTolerance, RhinoMath.ToRadians(1.0), 5.0, debug);
+        }
+
+        // ==============================================================================
+        // NEW CORE ENGINE
+        // ==============================================================================
+
+        private static Dictionary<double, int> GetInternalContinuities(NurbsCurve nc, double posTol, double angleTolDeg, double curvTolPct)
+        {
+            var dict = new Dictionary<double, int>();
+            var uniqueKnots = new HashSet<double>();
+            
+            for (int i = nc.Degree; i < nc.Knots.Count - nc.Degree; i++)
+            {
+                uniqueKnots.Add(nc.Knots[i]);
+            }
+            
+            foreach (double t in uniqueKnots)
+            {
+                var vBelow = ContinuityUtils.GetContinuityVectorsAt(nc, t, CurveEvaluationSide.Below);
+                var vAbove = ContinuityUtils.GetContinuityVectorsAt(nc, t, CurveEvaluationSide.Above);
+                
+                int level = ContinuityUtils.GetContinuityLevel(vBelow, vAbove, posTol, angleTolDeg, angleTolDeg, curvTolPct) ?? 0;
+                dict[t] = level;
+            }
+            return dict;
+        }
+
         public static (NurbsCurve Result, string ErrorMsg) MatchOneCurve(
             Curve crvToMod, 
             Curve crvRef, 
@@ -20,6 +67,11 @@ namespace CADacombs.Core.Curves
             int incrAsNeeded,
             double devTol,
             bool preventExtraInflections,
+            bool preserveInternalContinuity,
+            int maxInternalContinuity,
+            double posTol,
+            double angleTolDeg,
+            double curvTolPct,
             bool debug = false)
         {
             NurbsCurve ncMod = crvToMod.ToNurbsCurve();
@@ -49,7 +101,7 @@ namespace CADacombs.Core.Curves
                 else
                 {
                     ncMod.Dispose(); ncRef.Dispose(); 
-                    return (null, "Result cannot be created because the line requires more control points and Incr as needed is None.");
+                    return (null, "Result cannot be created because the line requires more control points and Incr as needed is disabled.");
                 }
             }
             else if (ncMod.SpanCount == 1 && ncMod.Degree == 3 && ncMod.Points.Count < minCpNeeded)
@@ -64,7 +116,7 @@ namespace CADacombs.Core.Curves
                 else
                 {
                     ncMod.Dispose(); ncRef.Dispose(); 
-                    return (null, "Result cannot be created because the curve requires more control points and Incr as needed is None.");
+                    return (null, "Result cannot be created because the curve requires more control points and Incr as needed is disabled.");
                 }
             }
 
@@ -133,8 +185,11 @@ namespace CADacombs.Core.Curves
             double bestAvgDev = double.MaxValue;
             
             int origInf = crvToMod.InflectionPoints()?.Length ?? 0;
+            var origInternalCont = preserveInternalContinuity ? GetInternalContinuities(ncMod, posTol, angleTolDeg, curvTolPct) : null;
+            
             bool rejectedByInflection = false;
             bool rejectedByDev = false;
+            bool rejectedByInternalCont = false;
 
             if (debug) RhinoApp.WriteLine($"--- MatchOneCurve Candidates Evaluated ({candidates.Count}) ---");
 
@@ -151,6 +206,31 @@ namespace CADacombs.Core.Curves
 
                 if (debug) 
                     RhinoApp.WriteLine($" {cand.Desc}\n    AvgDev: {avgDev:F6} | MaxDev: {maxDev:F6} | MinRad: {(minRad.HasValue ? minRad.Value.ToString("F6") : "N/A")} | P0-P1 Dist: {p0p1Dist:F6}");
+
+                if (preserveInternalContinuity && origInternalCont != null)
+                {
+                    bool degraded = false;
+                    foreach (var kvp in origInternalCont)
+                    {
+                        var vB = ContinuityUtils.GetContinuityVectorsAt(cand.Curve, kvp.Key, CurveEvaluationSide.Below);
+                        var vA = ContinuityUtils.GetContinuityVectorsAt(cand.Curve, kvp.Key, CurveEvaluationSide.Above);
+                        int newCont = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvTolPct) ?? 0;
+
+                        int targetCont = Math.Min(kvp.Value, maxInternalContinuity);
+                        if (newCont < targetCont)
+                        {
+                            if (debug) RhinoApp.WriteLine($"    [Rejected] Degraded internal continuity at t={kvp.Key:F3} (Orig: G{kvp.Value}, New: G{newCont}, Target: G{targetCont})");
+                            degraded = true;
+                            break;
+                        }
+                    }
+                    if (degraded)
+                    {
+                        cand.Curve.Dispose();
+                        rejectedByInternalCont = true;
+                        continue;
+                    }
+                }
 
                 if (preventExtraInflections)
                 {
@@ -196,6 +276,7 @@ namespace CADacombs.Core.Curves
             if (winner == null)
             {
                 if (rejectedByDev) errorMsg = "Result cannot be created because it exceeds the Crv dev limit.";
+                else if (rejectedByInternalCont) errorMsg = "Result cannot be created because it would degrade internal continuity.";
                 else if (rejectedByInflection) errorMsg = "Result cannot be created because it would add extra inflection points.";
                 else errorMsg = "Result cannot be created with the current constraints.";
             }
@@ -215,6 +296,11 @@ namespace CADacombs.Core.Curves
             int incrAsNeeded,
             double devTol,
             bool preventExtraInflections,
+            bool preserveInternalContinuity,
+            int maxInternalContinuity,
+            double posTol,
+            double angleTolDeg,
+            double curvTolPct,
             bool debug = false)
         {
             NurbsCurve ncWipA = crvA.ToNurbsCurve();
@@ -243,7 +329,7 @@ namespace CADacombs.Core.Curves
                         var ts = ncWip.DivideByCount(ptsNeeded + 1, true);
                         if (ts != null) for (int k = 1; k < ts.Length - 1; k++) ncWip.Knots.InsertKnot(ts[k], 1);
                     }
-                    else { localErr = "Result cannot be created because a line requires more control points and Incr as needed is None."; ncWip.Dispose(); ncWip = null; return; }
+                    else { localErr = "Result cannot be created because a line requires more control points and Incr as needed is disabled."; ncWip.Dispose(); ncWip = null; return; }
                 }
                 else if (ncWip.SpanCount == 1 && ncWip.Degree == 3 && ncWip.Points.Count < minCpNeeded)
                 {
@@ -254,7 +340,7 @@ namespace CADacombs.Core.Curves
                         var ts = ncWip.DivideByCount(ptsNeeded + 1, true);
                         if (ts != null) for (int k = 1; k < ts.Length - 1; k++) ncWip.Knots.InsertKnot(ts[k], 1);
                     }
-                    else { localErr = "Result cannot be created because a curve requires more control points and Incr as needed is None."; ncWip.Dispose(); ncWip = null; return; }
+                    else { localErr = "Result cannot be created because a curve requires more control points and Incr as needed is disabled."; ncWip.Dispose(); ncWip = null; return; }
                 }
             }
 
@@ -379,8 +465,12 @@ namespace CADacombs.Core.Curves
             int origInfA = crvA.InflectionPoints()?.Length ?? 0;
             int origInfB = crvB.InflectionPoints()?.Length ?? 0;
             
+            var origInternalContA = preserveInternalContinuity ? GetInternalContinuities(ncWipA, posTol, angleTolDeg, curvTolPct) : null;
+            var origInternalContB = preserveInternalContinuity ? GetInternalContinuities(ncWipB, posTol, angleTolDeg, curvTolPct) : null;
+            
             bool rejectedByInflection = false;
             bool rejectedByDev = false;
+            bool rejectedByInternalCont = false;
 
             if (debug) RhinoApp.WriteLine($"--- MatchBothCurves Candidates Evaluated ({candidates.Count}) ---");
 
@@ -407,6 +497,53 @@ namespace CADacombs.Core.Curves
 
                 if (debug) 
                     RhinoApp.WriteLine($" {desc}\n    AvgDev Sum: {avgDevSum:F6} (A:{avgDevA:F6}, B:{avgDevB:F6}) | MaxDev: {maxDev:F6} | MinRad: {(minRad != double.MinValue ? minRad.ToString("F6") : "N/A")} | P0-P1 Dist: (A:{p0p1A:F6}, B:{p0p1B:F6})");
+
+                if (preserveInternalContinuity && (origInternalContA != null || origInternalContB != null))
+                {
+                    bool degraded = false;
+                    if (origInternalContA != null)
+                    {
+                        foreach (var kvp in origInternalContA)
+                        {
+                            var vB = ContinuityUtils.GetContinuityVectorsAt(candA, kvp.Key, CurveEvaluationSide.Below);
+                            var vA = ContinuityUtils.GetContinuityVectorsAt(candA, kvp.Key, CurveEvaluationSide.Above);
+                            int newCont = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvTolPct) ?? 0;
+
+                            int targetCont = Math.Min(kvp.Value, maxInternalContinuity);
+                            if (newCont < targetCont)
+                            {
+                                if (debug) RhinoApp.WriteLine($"    [Rejected] Degraded Curve A internal continuity at t={kvp.Key:F3} (Orig: G{kvp.Value}, New: G{newCont}, Target: G{targetCont})");
+                                degraded = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!degraded && origInternalContB != null)
+                    {
+                        foreach (var kvp in origInternalContB)
+                        {
+                            var vB = ContinuityUtils.GetContinuityVectorsAt(candB, kvp.Key, CurveEvaluationSide.Below);
+                            var vA = ContinuityUtils.GetContinuityVectorsAt(candB, kvp.Key, CurveEvaluationSide.Above);
+                            int newCont = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvTolPct) ?? 0;
+
+                            int targetCont = Math.Min(kvp.Value, maxInternalContinuity);
+                            if (newCont < targetCont)
+                            {
+                                if (debug) RhinoApp.WriteLine($"    [Rejected] Degraded Curve B internal continuity at t={kvp.Key:F3} (Orig: G{kvp.Value}, New: G{newCont}, Target: G{targetCont})");
+                                degraded = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (degraded)
+                    {
+                        candA.Dispose();
+                        candB.Dispose();
+                        rejectedByInternalCont = true;
+                        continue;
+                    }
+                }
 
                 if (preventExtraInflections)
                 {
@@ -451,6 +588,7 @@ namespace CADacombs.Core.Curves
             if (winner.ResultA == null)
             {
                 if (rejectedByDev) errorMsg = "Result cannot be created because it exceeds the Crv dev limit.";
+                else if (rejectedByInternalCont) errorMsg = "Result cannot be created because it would degrade internal continuity.";
                 else if (rejectedByInflection) errorMsg = "Result cannot be created because it would add extra inflection points.";
                 else errorMsg = "Result cannot be created with the current constraints.";
             }

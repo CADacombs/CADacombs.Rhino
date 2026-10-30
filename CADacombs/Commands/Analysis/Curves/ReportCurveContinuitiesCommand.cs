@@ -18,8 +18,7 @@ namespace CADacombs.Commands.Analysis.Curves
 
         // Sticky Options
         private double _distTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
-        private double _g1AngleTolDeg = RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
-        private double _g2PlusAngleTolDeg = 2.0;
+        private double _vectAngleTolDeg = RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
         private double _vectMagTolPct = 5.0;
         private int _dotHeight = 12;
         private bool _addDots = false;
@@ -48,8 +47,7 @@ namespace CADacombs.Commands.Analysis.Curves
             // --- STEP 2: Preview Loop & Options ---
             OptionToggle optValAddDots = new OptionToggle(_addDots, "No", "Yes");
             OptionDouble optValDist = new OptionDouble(_distTol);
-            OptionDouble optValG1Ang = new OptionDouble(_g1AngleTolDeg);
-            OptionDouble optValG2Ang = new OptionDouble(_g2PlusAngleTolDeg);
+            OptionDouble optValAngDeg = new OptionDouble(_vectAngleTolDeg);
             OptionDouble optValVectMagPct = new OptionDouble(_vectMagTolPct);
             OptionInteger optValHeight = new OptionInteger(_dotHeight, 8, 72);
 
@@ -91,8 +89,7 @@ namespace CADacombs.Commands.Analysis.Curves
                 
                 int optAdd = goOpt.AddOptionToggle("AddDots", ref optValAddDots);
                 int optDist = goOpt.AddOptionDouble("DistTol", ref optValDist);
-                int optG1 = goOpt.AddOptionDouble("G1AngleTol", ref optValG1Ang);
-                int optG2 = goOpt.AddOptionDouble("G2PlusAngleTol", ref optValG2Ang);
+                int optG1 = goOpt.AddOptionDouble("VectAngleDiffTol", ref optValAngDeg);
                 int optMag = goOpt.AddOptionDouble("VectMagTolPct", ref optValVectMagPct);
                 int optH = goOpt.AddOptionInteger("TextHeight", ref optValHeight);
 
@@ -116,8 +113,7 @@ namespace CADacombs.Commands.Analysis.Curves
                 {
                     _addDots = optValAddDots.CurrentValue;
                     _distTol = optValDist.CurrentValue;
-                    _g1AngleTolDeg = optValG1Ang.CurrentValue;
-                    _g2PlusAngleTolDeg = optValG2Ang.CurrentValue;
+                    _vectAngleTolDeg = optValAngDeg.CurrentValue;
                     _vectMagTolPct = optValVectMagPct.CurrentValue;
                     _dotHeight = optValHeight.CurrentValue;
                 }
@@ -211,7 +207,7 @@ namespace CADacombs.Commands.Analysis.Curves
             if (ncB == null || ncA == null) return;
 
             // Check True Geometric Infinity (Domain-agnostic)
-            bool isGInf = ContinuityUtils.IsGInfinity(ncA, tA, CurveEvaluationSide.Above, ncB, tB, CurveEvaluationSide.Below, _g1AngleTolDeg);
+            bool isGInf = ContinuityUtils.IsGInfinity(ncA, tA, CurveEvaluationSide.Above, ncB, tB, CurveEvaluationSide.Below, _vectAngleTolDeg);
             
             var vB = ContinuityUtils.GetContinuityVectorsAt(ncB, tB, CurveEvaluationSide.Below);
             var vA = ContinuityUtils.GetContinuityVectorsAt(ncA, tA, CurveEvaluationSide.Above);
@@ -222,7 +218,7 @@ namespace CADacombs.Commands.Analysis.Curves
                 return;
             }
 
-            int? gLevel = ContinuityUtils.GetContinuityLevel(vB, vA, _distTol, _g1AngleTolDeg, _g2PlusAngleTolDeg, _vectMagTolPct);
+            int? gLevel = ContinuityUtils.GetContinuityLevel(vB, vA, _distTol, _vectAngleTolDeg, _vectAngleTolDeg, _vectMagTolPct);
             AddDotRecord(outDots, vA.Pt, ContinuityUtils.FormatContinuityString(gLevel), ref cGap, ref c0, ref c1, ref c2, ref c3, ref cInf);
         }
 

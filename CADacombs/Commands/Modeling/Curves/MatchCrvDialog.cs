@@ -36,6 +36,10 @@ namespace CADacombs.Commands.Modeling.Curves
         
         private CheckBox _chkPreventInflections;
         
+        private CheckBox _chkPreserveInternalCont;
+        private RadioButton _rbIntG2;
+        private RadioButton _rbIntG3;
+        
         private CheckBox _chkSkipAtCont;
         private TextBox _txtPosTol;
         private TextBox _txtAngleTol;
@@ -69,7 +73,7 @@ namespace CADacombs.Commands.Modeling.Curves
             _typingTimer = new UITimer { Interval = 1.0 };
             _typingTimer.Elapsed += OnTypingTimerElapsed;
 
-            Title = "CADacombs MatchCrv";
+            Title = "CADacombs Match Curve";
             Resizable = false;
             AutoSize = true;
             Padding = new Padding(12);
@@ -146,6 +150,18 @@ namespace CADacombs.Commands.Modeling.Curves
 
             _chkPreventInflections = new CheckBox { Text = "Prevent extra inflection pts", Checked = MatchCrvOptions.PreventExtraInflections };
             _chkPreventInflections.CheckedChanged += OnOptionChanged;
+            
+            _chkPreserveInternalCont = new CheckBox { Text = "Preserve internal continuity", Checked = MatchCrvOptions.PreserveInternalContinuity };
+            _chkPreserveInternalCont.CheckedChanged += OnOptionChanged;
+
+            _rbIntG2 = new RadioButton { Text = "G2" };
+            _rbIntG3 = new RadioButton(_rbIntG2) { Text = "G3" };
+            
+            if (MatchCrvOptions.MaxInternalContinuity == 3) _rbIntG3.Checked = true;
+            else _rbIntG2.Checked = true;
+            
+            _rbIntG2.CheckedChanged += OnOptionChanged;
+            _rbIntG3.CheckedChanged += OnOptionChanged;
 
             _chkDeleteInput = new CheckBox { Text = "Delete input", Checked = MatchCrvOptions.DeleteInput };
             _chkDebug = new CheckBox { Text = "Debug", Checked = MatchCrvOptions.Debug };
@@ -167,19 +183,19 @@ namespace CADacombs.Commands.Modeling.Curves
         {
             var layout = new DynamicLayout { DefaultSpacing = new Size(5, 5) };
 
-            layout.AddRow(new Label { Text = "Continuity", TextColor = Colors.DimGray });
+            layout.AddRow(new Label { Text = "Continuity" });
             layout.AddRow(new Panel { Padding = new Padding(12, 0, 0, 0), Content = _rblContinuity });
             
-            layout.AddRow(new Label { Text = "Preserve other end", TextColor = Colors.DimGray });
+            layout.AddRow(new Label { Text = "Preserve other end" });
             layout.AddRow(new Panel { Padding = new Padding(12, 0, 0, 0), Content = _rblPreserve });
             
-            layout.AddRow(new Label { Text = "Modify curve", TextColor = Colors.DimGray });
+            layout.AddRow(new Label { Text = "Modify curve" });
             layout.AddRow(new Panel { Padding = new Padding(12, 0, 0, 0), Content = _rblModifyMode });
 
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
             layout.AddRow(_chkSkipAtCont);
-            layout.AddRow(new Panel { Padding = new Padding(24, 0, 0, 0), Content = new Label { Text = "within these tolerances:", TextColor = Colors.DimGray } });
+            layout.AddRow(new Panel { Padding = new Padding(24, 0, 0, 0), Content = new Label { Text = "within these tolerances:" } });
 
             var skipGrid = new TableLayout { Spacing = new Size(5, 4) };
             skipGrid.Rows.Add(new TableRow(new Label { Text = "Position:", VerticalAlignment = VerticalAlignment.Center }, _txtPosTol, null));
@@ -198,6 +214,10 @@ namespace CADacombs.Commands.Modeling.Curves
             layout.AddRow(new Panel { Padding = new Padding(24, 0, 0, 0), Content = incrStack });
             
             layout.AddRow(_chkPreventInflections);
+            layout.AddRow(_chkPreserveInternalCont);
+            
+            var maxIntStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, VerticalContentAlignment = VerticalAlignment.Center, Items = { new Label { Text = "up through" }, _rbIntG2, _rbIntG3 } };
+            layout.AddRow(new Panel { Padding = new Padding(24, 0, 0, 0), Content = maxIntStack });
             
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
             
@@ -266,6 +286,10 @@ namespace CADacombs.Commands.Modeling.Curves
             bool incrChecked = _chkIncrAsNeeded.Checked ?? false;
             _rbDeg.Enabled = incrChecked;
             _rbSpan.Enabled = incrChecked;
+            
+            bool preserveChecked = _chkPreserveInternalCont.Checked ?? false;
+            _rbIntG2.Enabled = preserveChecked;
+            _rbIntG3.Enabled = preserveChecked;
         }
 
         private void UpdatePreview(bool printReport = false)
@@ -283,13 +307,17 @@ namespace CADacombs.Commands.Modeling.Curves
             bool limitDev = _chkLimitDev.Checked ?? false;
             double devTol = limitDev ? double.Parse(_txtDevTol.Text) : double.MaxValue;
             
+            double posTol = double.Parse(_txtPosTol.Text);
+            double angleTol = double.Parse(_txtAngleTol.Text);
+            double curvTol = double.Parse(_txtCurvTol.Text);
+            
             bool deformLines = _chkDeformLines.Checked ?? false;
             bool deformArcs = _chkDeformArcs.Checked ?? false;
-            
-            // Map CheckBox/Radio combination back to the 0, 1, 2 integer state for the math class
             int incr = (_chkIncrAsNeeded.Checked ?? false) ? (_rbDeg.Checked ? 0 : 1) : 2;
             
             bool preventExtraInf = _chkPreventInflections.Checked ?? false;
+            bool preserveInternal = _chkPreserveInternalCont.Checked ?? false;
+            int maxInternal = _rbIntG3.Checked ? 3 : 2;
             bool debug = _chkDebug.Checked ?? false;
 
             ResultCurveA?.Dispose(); ResultCurveA = null;
@@ -301,7 +329,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (modify == 0) // First Curve
             {
-                var res = CurveMatchMath.MatchOneCurve(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, debug);
+                var res = CurveMatchMath.MatchOneCurve(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, preserveInternal, maxInternal, posTol, angleTol, curvTol, debug);
                 ResultCurveA = res.Result;
                 LastErrorMessage = res.ErrorMsg;
 
@@ -313,7 +341,7 @@ namespace CADacombs.Commands.Modeling.Curves
             }
             else if (modify == 1) // Average
             {
-                var bothResult = CurveMatchMath.MatchBothCurves(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, debug);
+                var bothResult = CurveMatchMath.MatchBothCurves(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, preserveInternal, maxInternal, posTol, angleTol, curvTol, debug);
                 ResultCurveA = bothResult.ResultA;
                 ResultCurveB = bothResult.ResultB;
                 LastErrorMessage = bothResult.ErrorMsg;
@@ -326,9 +354,9 @@ namespace CADacombs.Commands.Modeling.Curves
             }
             else if (modify == 2) // Minimize Deviation
             {
-                var resFirst = CurveMatchMath.MatchOneCurve(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, debug);
-                var resSecond = CurveMatchMath.MatchOneCurve(_crvB, _crvA, _bT1WorkEndB, _bT1WorkEndA, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, debug);
-                var bothResult = CurveMatchMath.MatchBothCurves(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, debug);
+                var resFirst = CurveMatchMath.MatchOneCurve(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, preserveInternal, maxInternal, posTol, angleTol, curvTol, debug);
+                var resSecond = CurveMatchMath.MatchOneCurve(_crvB, _crvA, _bT1WorkEndB, _bT1WorkEndA, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, preserveInternal, maxInternal, posTol, angleTol, curvTol, debug);
+                var bothResult = CurveMatchMath.MatchBothCurves(_crvA, _crvB, _bT1WorkEndA, _bT1WorkEndB, cont, preserve, deformLines, deformArcs, incr, devTol, preventExtraInf, preserveInternal, maxInternal, posTol, angleTol, curvTol, debug);
 
                 NurbsCurve candA = resFirst.Result;
                 NurbsCurve candB = resSecond.Result;
@@ -456,10 +484,11 @@ namespace CADacombs.Commands.Modeling.Curves
 
             MatchCrvOptions.DeformLines = _chkDeformLines.Checked ?? false;
             MatchCrvOptions.DeformArcs = _chkDeformArcs.Checked ?? false;
-            
             MatchCrvOptions.IncrAsNeeded = (_chkIncrAsNeeded.Checked ?? false) ? (_rbDeg.Checked ? 0 : 1) : 2;
             
             MatchCrvOptions.PreventExtraInflections = _chkPreventInflections.Checked ?? false;
+            MatchCrvOptions.PreserveInternalContinuity = _chkPreserveInternalCont.Checked ?? false;
+            MatchCrvOptions.MaxInternalContinuity = _rbIntG3.Checked ? 3 : 2;
 
             MatchCrvOptions.DeleteInput = _chkDeleteInput.Checked ?? false;
             MatchCrvOptions.Debug = _chkDebug.Checked ?? false;

@@ -32,6 +32,10 @@ namespace CADacombs.Core.Curves
         public static int IncrAsNeeded { get; set; } = 0; 
         
         public static bool PreventExtraInflections { get; set; } = false;
+        public static bool PreserveInternalContinuity { get; set; } = true;
+        
+        // 2 = G2, 3 = G3
+        public static int MaxInternalContinuity { get; set; } = 2; 
 
         public static bool DeleteInput { get; set; } = true;
         public static bool Echo { get; set; } = true; // Excluded from Load/Save so it resets default for script runners
@@ -61,6 +65,8 @@ namespace CADacombs.Core.Curves
             DeformArcs = settings.GetBool("MatchCrv_DeformArcs", DeformArcs);
             IncrAsNeeded = settings.GetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
             PreventExtraInflections = settings.GetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
+            PreserveInternalContinuity = settings.GetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);
+            MaxInternalContinuity = settings.GetInteger("MatchCrv_MaxInternalContinuity", MaxInternalContinuity);
 
             DeleteInput = settings.GetBool("MatchCrv_DeleteInput", DeleteInput);
             Debug = settings.GetBool("MatchCrv_Debug", Debug);
@@ -87,6 +93,8 @@ namespace CADacombs.Core.Curves
             settings.SetBool("MatchCrv_DeformArcs", DeformArcs);
             settings.SetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
             settings.SetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
+            settings.SetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);
+            settings.SetInteger("MatchCrv_MaxInternalContinuity", MaxInternalContinuity);
 
             settings.SetBool("MatchCrv_DeleteInput", DeleteInput);
             settings.SetBool("MatchCrv_Debug", Debug);
