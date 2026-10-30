@@ -19,6 +19,7 @@ namespace CADacombs.Commands.Modeling.Curves
         private readonly string[] _continuityNames = { "Position", "Tangency", "Curvature" };
         private readonly string[] _preserveNames = { "None", "Position", "Tangency", "Curvature", "Periodic" };
         private readonly string[] _modifyNames = { "First", "Average", "MinimizeDev" };
+        private readonly string[] _incrNames = { "Deg", "SpanCt", "None" };
 
         public MatchCrvCommand()
         {
@@ -44,111 +45,129 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (go.GetMultiple(2, 2) != GetResult.Object) return Result.Cancel;
                 objRefs = go.Objects();
 
-                var dialog = new MatchCrvDialog(this.Settings);
-                var dialogResult = dialog.ShowModal(RhinoEtoApp.MainWindow);
+                Curve cA_int = objRefs[0].Curve();
+                Curve cB_int = objRefs[1].Curve();
+                if (cA_int == null || cB_int == null) return Result.Failure;
+
+                bool bT1_A = IsSelectionCloserToT1(cA_int, objRefs[0].SelectionPoint());
+                bool bT1_B = IsSelectionCloserToT1(cB_int, objRefs[1].SelectionPoint());
+
+                RhinoApp.SetCommandPrompt("Continue in dialog...");
+                var dialog = new MatchCrvDialog(this.Settings, cA_int, bT1_A, cB_int, bT1_B);
+                var dialogResult = dialog.ShowSemiModal(doc, RhinoEtoApp.MainWindow);
+                RhinoApp.SetCommandPrompt("Command complete.");
                 
                 if (dialogResult != true) return Result.Cancel;
-            }
-            else
-            {
-                var go = new GetObject();
-                go.SetCommandPrompt("Select 2 curves near their ends to match");
-                go.GeometryFilter = ObjectType.Curve;
-                go.OneByOnePostSelect = true;
-                go.DisablePreSelect();
-                go.AcceptNumber(true, true);
 
-                while (true)
+                if (dialog.ResultCurveA == null && dialog.ResultCurveB == null)
                 {
-                    go.ClearCommandOptions();
-
-                    var optPosTol = new OptionDouble(MatchCrvOptions.PosTol);
-                    var optAngleTol = new OptionDouble(MatchCrvOptions.AngleTolDeg);
-                    var optCurvTol = new OptionDouble(MatchCrvOptions.CurvatureMagTolPct);
-                    var optSkip = new OptionToggle(MatchCrvOptions.SkipIfAlreadyAtContinuity, "Process", "Skip");
-                    
-                    var optLimitDev = new OptionToggle(MatchCrvOptions.LimitCrvDev, "No", "Yes");
-                    var optDevTol = new OptionDouble(MatchCrvOptions.DevTol);
-                    
-                    var optDeformLines = new OptionToggle(MatchCrvOptions.DeformLines, "No", "Yes");
-                    var optRebuild = new OptionToggle(MatchCrvOptions.RebuildRationals, "No", "Yes");
-                    var optKeepArcs = new OptionToggle(MatchCrvOptions.KeepArcs, "No", "Yes");
-                    
-                    var optDelete = new OptionToggle(MatchCrvOptions.DeleteInput, "Keep", "Delete");
-                    var optEcho = new OptionToggle(MatchCrvOptions.Echo, "No", "Yes");
-                    var optDebug = new OptionToggle(MatchCrvOptions.Debug, "No", "Yes");
-
-                    int idxContinuity = go.AddOptionList("Continuity", _continuityNames, MatchCrvOptions.Continuity);
-                    int idxPreserve = go.AddOptionList("PreserveOtherEnd", _preserveNames, MatchCrvOptions.PreserveOtherEnd);
-                    int idxModify = go.AddOptionList("ModifyCurve", _modifyNames, MatchCrvOptions.ModifyMode);
-                    
-                    go.AddOptionToggle("LimitCrvDev", ref optLimitDev);
-                    if (MatchCrvOptions.LimitCrvDev) go.AddOptionDouble("DevTol", ref optDevTol);
-                    
-                    go.AddOptionToggle("IfAlreadyAtContinuity", ref optSkip);
-                    if (MatchCrvOptions.SkipIfAlreadyAtContinuity)
-                    {
-                        go.AddOptionDouble("PosTol", ref optPosTol);
-                        if (MatchCrvOptions.Continuity >= 1) go.AddOptionDouble("AngleTol", ref optAngleTol);
-                        if (MatchCrvOptions.Continuity == 2) go.AddOptionDouble("CurvMagTol", ref optCurvTol);
-                    }
-
-                    go.AddOptionToggle("DeformLines", ref optDeformLines);
-                    go.AddOptionToggle("RebuildRationals", ref optRebuild);
-                    if (MatchCrvOptions.RebuildRationals) go.AddOptionToggle("KeepArcs", ref optKeepArcs);
-                    
-                    go.AddOptionToggle("Action", ref optDelete);
-                    go.AddOptionToggle("Echo", ref optEcho);
-                    go.AddOptionToggle("Debug", ref optDebug);
-
-                    GetResult res = go.GetMultiple(2, 2);
-
-                    if (res == GetResult.Number)
-                    {
-                        MatchCrvOptions.DevTol = go.Number();
-                        MatchCrvOptions.Save(this.Settings);
-                        continue;
-                    }
-                    else if (res == GetResult.Option)
-                    {
-                        var option = go.Option();
-                        if (option.Index == idxContinuity) MatchCrvOptions.Continuity = option.CurrentListOptionIndex;
-                        else if (option.Index == idxPreserve) MatchCrvOptions.PreserveOtherEnd = option.CurrentListOptionIndex;
-                        else if (option.Index == idxModify) MatchCrvOptions.ModifyMode = option.CurrentListOptionIndex;
-
-                        MatchCrvOptions.LimitCrvDev = optLimitDev.CurrentValue;
-                        MatchCrvOptions.DevTol = optDevTol.CurrentValue;
-                        if (MatchCrvOptions.DevTol <= 0) MatchCrvOptions.DevTol = RhinoMath.ZeroTolerance;
-
-                        MatchCrvOptions.SkipIfAlreadyAtContinuity = optSkip.CurrentValue;
-                        MatchCrvOptions.PosTol = optPosTol.CurrentValue;
-                        if (MatchCrvOptions.PosTol <= 0) MatchCrvOptions.PosTol = RhinoMath.ZeroTolerance;
-                        
-                        MatchCrvOptions.AngleTolDeg = optAngleTol.CurrentValue;
-                        if (MatchCrvOptions.AngleTolDeg <= 0) MatchCrvOptions.AngleTolDeg = RhinoMath.ToDegrees(RhinoMath.ZeroTolerance);
-                        
-                        MatchCrvOptions.CurvatureMagTolPct = optCurvTol.CurrentValue;
-
-                        MatchCrvOptions.DeformLines = optDeformLines.CurrentValue;
-                        MatchCrvOptions.RebuildRationals = optRebuild.CurrentValue;
-                        MatchCrvOptions.KeepArcs = optKeepArcs.CurrentValue;
-
-                        MatchCrvOptions.DeleteInput = optDelete.CurrentValue;
-                        MatchCrvOptions.Echo = optEcho.CurrentValue;
-                        MatchCrvOptions.Debug = optDebug.CurrentValue;
-
-                        MatchCrvOptions.Save(this.Settings);
-                        continue;
-                    }
-                    else if (res == GetResult.Object)
-                    {
-                        break;
-                    }
-                    return Result.Cancel;
+                    RhinoApp.WriteLine(dialog.LastErrorMessage ?? "Result cannot be created with the current constraints.");
+                    return Result.Failure;
                 }
-                objRefs = go.Objects();
-            }
 
+                if (dialog.ResultCurveA != null) ProcessResult(doc, objRefs[0], cA_int, dialog.ResultCurveA);
+                if (dialog.ResultCurveB != null) ProcessResult(doc, objRefs[1], cB_int, dialog.ResultCurveB);
+
+                doc.Views.Redraw();
+                return Result.Success;
+            }
+            
+            var goCli = new GetObject();
+            goCli.SetCommandPrompt("Select 2 curves near their ends to match");
+            goCli.GeometryFilter = ObjectType.Curve;
+            goCli.OneByOnePostSelect = true;
+            goCli.DisablePreSelect();
+            goCli.AcceptNumber(true, true);
+
+            while (true)
+            {
+                goCli.ClearCommandOptions();
+
+                var optPosTol = new OptionDouble(MatchCrvOptions.PosTol);
+                var optAngleTol = new OptionDouble(MatchCrvOptions.AngleTolDeg);
+                var optCurvTol = new OptionDouble(MatchCrvOptions.CurvatureMagTolPct);
+                var optSkip = new OptionToggle(MatchCrvOptions.SkipIfAlreadyAtContinuity, "Process", "Skip");
+                
+                var optLimitDev = new OptionToggle(MatchCrvOptions.LimitCrvDev, "No", "Yes");
+                var optDevTol = new OptionDouble(MatchCrvOptions.DevTol);
+                
+                var optDeformLines = new OptionToggle(MatchCrvOptions.DeformLines, "No", "Yes");
+                var optDeformArcs = new OptionToggle(MatchCrvOptions.DeformArcs, "No", "Yes");
+                var optPrevInflections = new OptionToggle(MatchCrvOptions.PreventExtraInflections, "Allow", "Prevent");
+                
+                var optDelete = new OptionToggle(MatchCrvOptions.DeleteInput, "Keep", "Delete");
+                var optDebug = new OptionToggle(MatchCrvOptions.Debug, "No", "Yes");
+
+                int idxContinuity = goCli.AddOptionList("Continuity", _continuityNames, MatchCrvOptions.Continuity);
+                int idxPreserve = goCli.AddOptionList("PreserveOtherEnd", _preserveNames, MatchCrvOptions.PreserveOtherEnd);
+                int idxModify = goCli.AddOptionList("ModifyCurve", _modifyNames, MatchCrvOptions.ModifyMode);
+                int idxIncr = goCli.AddOptionList("IncrAsNeeded", _incrNames, MatchCrvOptions.IncrAsNeeded);
+                
+                goCli.AddOptionToggle("CrvDevLimit", ref optLimitDev);
+                if (MatchCrvOptions.LimitCrvDev) goCli.AddOptionDouble("DevTol", ref optDevTol);
+                
+                goCli.AddOptionToggle("IfAlreadyAtContinuity", ref optSkip);
+                if (MatchCrvOptions.SkipIfAlreadyAtContinuity)
+                {
+                    goCli.AddOptionDouble("PosTol", ref optPosTol);
+                    if (MatchCrvOptions.Continuity >= 1) goCli.AddOptionDouble("AngleTol", ref optAngleTol);
+                    if (MatchCrvOptions.Continuity == 2) goCli.AddOptionDouble("CurvMagTol", ref optCurvTol);
+                }
+
+                goCli.AddOptionToggle("DeformLines", ref optDeformLines);
+                goCli.AddOptionToggle("DeformArcs", ref optDeformArcs);
+                goCli.AddOptionToggle("ExtraInflections", ref optPrevInflections);
+                
+                goCli.AddOptionToggle("Action", ref optDelete);
+                goCli.AddOptionToggle("Debug", ref optDebug);
+
+                GetResult res = goCli.GetMultiple(2, 2);
+
+                if (res == GetResult.Number)
+                {
+                    MatchCrvOptions.DevTol = goCli.Number();
+                    MatchCrvOptions.Save(this.Settings);
+                    continue;
+                }
+                else if (res == GetResult.Option)
+                {
+                    var option = goCli.Option();
+                    if (option.Index == idxContinuity) MatchCrvOptions.Continuity = option.CurrentListOptionIndex;
+                    else if (option.Index == idxPreserve) MatchCrvOptions.PreserveOtherEnd = option.CurrentListOptionIndex;
+                    else if (option.Index == idxModify) MatchCrvOptions.ModifyMode = option.CurrentListOptionIndex;
+                    else if (option.Index == idxIncr) MatchCrvOptions.IncrAsNeeded = option.CurrentListOptionIndex;
+
+                    MatchCrvOptions.LimitCrvDev = optLimitDev.CurrentValue;
+                    MatchCrvOptions.DevTol = optDevTol.CurrentValue;
+                    if (MatchCrvOptions.DevTol <= 0) MatchCrvOptions.DevTol = RhinoMath.ZeroTolerance;
+
+                    MatchCrvOptions.SkipIfAlreadyAtContinuity = optSkip.CurrentValue;
+                    MatchCrvOptions.PosTol = optPosTol.CurrentValue;
+                    if (MatchCrvOptions.PosTol <= 0) MatchCrvOptions.PosTol = RhinoMath.ZeroTolerance;
+                    
+                    MatchCrvOptions.AngleTolDeg = optAngleTol.CurrentValue;
+                    if (MatchCrvOptions.AngleTolDeg <= 0) MatchCrvOptions.AngleTolDeg = RhinoMath.ToDegrees(RhinoMath.ZeroTolerance);
+                    
+                    MatchCrvOptions.CurvatureMagTolPct = optCurvTol.CurrentValue;
+
+                    MatchCrvOptions.DeformLines = optDeformLines.CurrentValue;
+                    MatchCrvOptions.DeformArcs = optDeformArcs.CurrentValue;
+                    MatchCrvOptions.PreventExtraInflections = optPrevInflections.CurrentValue;
+
+                    MatchCrvOptions.DeleteInput = optDelete.CurrentValue;
+                    MatchCrvOptions.Debug = optDebug.CurrentValue;
+
+                    MatchCrvOptions.Save(this.Settings);
+                    continue;
+                }
+                else if (res == GetResult.Object)
+                {
+                    break;
+                }
+                return Result.Cancel;
+            }
+            
+            objRefs = goCli.Objects();
             if (objRefs == null || objRefs.Length != 2) return Result.Cancel;
 
             Curve cA = objRefs[0].Curve();
@@ -172,31 +191,38 @@ namespace CADacombs.Commands.Modeling.Curves
 
             NurbsCurve resultA = null;
             NurbsCurve resultB = null;
+            string lastErrorMsg = null;
 
             if (MatchCrvOptions.ModifyMode == 0) // First Curve
             {
                 if (MatchCrvOptions.Debug) RhinoApp.WriteLine("Modifying First Curve Only...");
-                resultA = CurveMatchMath.MatchOneCurve(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, currentDevTol, MatchCrvOptions.Debug);
+                var res = CurveMatchMath.MatchOneCurve(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, MatchCrvOptions.DeformArcs, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.Debug);
+                resultA = res.Result;
+                lastErrorMsg = res.ErrorMsg;
             }
             else if (MatchCrvOptions.ModifyMode == 1) // Average
             {
                 if (MatchCrvOptions.Debug) RhinoApp.WriteLine("Modifying Both Curves (Average)...");
-                var bothResult = CurveMatchMath.MatchBothCurves(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, currentDevTol, MatchCrvOptions.Debug);
+                var bothResult = CurveMatchMath.MatchBothCurves(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, MatchCrvOptions.DeformArcs, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.Debug);
                 resultA = bothResult.ResultA;
                 resultB = bothResult.ResultB;
+                lastErrorMsg = bothResult.ErrorMsg;
             }
             else if (MatchCrvOptions.ModifyMode == 2) // Minimize Deviation
             {
                 if (MatchCrvOptions.Debug) RhinoApp.WriteLine("Evaluating First, Second, and Both for least deviation...");
                 
-                NurbsCurve candA = CurveMatchMath.MatchOneCurve(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, currentDevTol, MatchCrvOptions.Debug);
-                NurbsCurve candB = CurveMatchMath.MatchOneCurve(cB, cA, bT1WorkEndB, bT1WorkEndA, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, currentDevTol, MatchCrvOptions.Debug);
-                var bothResult = CurveMatchMath.MatchBothCurves(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, currentDevTol, MatchCrvOptions.Debug);
+                var resFirst = CurveMatchMath.MatchOneCurve(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, MatchCrvOptions.DeformArcs, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.Debug);
+                var resSecond = CurveMatchMath.MatchOneCurve(cB, cA, bT1WorkEndB, bT1WorkEndA, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, MatchCrvOptions.DeformArcs, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.Debug);
+                var bothResult = CurveMatchMath.MatchBothCurves(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.DeformLines, MatchCrvOptions.DeformArcs, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.Debug);
+
+                NurbsCurve candA = resFirst.Result;
+                NurbsCurve candB = resSecond.Result;
 
                 double devA = candA != null ? CurveMatchMath.GetAverageDeviation(cA, candA) : double.MaxValue;
                 double devB = candB != null ? CurveMatchMath.GetAverageDeviation(cB, candB) : double.MaxValue;
                 double devBoth = (bothResult.ResultA != null && bothResult.ResultB != null) 
-                    ? CurveMatchMath.GetAverageDeviation(cA, bothResult.ResultA) + CurveMatchMath.GetAverageDeviation(cB, bothResult.ResultB) 
+                    ? (CurveMatchMath.GetAverageDeviation(cA, bothResult.ResultA) + CurveMatchMath.GetAverageDeviation(cB, bothResult.ResultB)) / 2.0 
                     : double.MaxValue;
 
                 if (MatchCrvOptions.Debug)
@@ -208,7 +234,12 @@ namespace CADacombs.Commands.Modeling.Curves
 
                 double minDev = Math.Min(devA, Math.Min(devB, devBoth));
 
-                if (minDev == double.MaxValue) { resultA = null; resultB = null; }
+                if (minDev == double.MaxValue) 
+                { 
+                    resultA = null; 
+                    resultB = null; 
+                    lastErrorMsg = bothResult.ErrorMsg ?? resFirst.ErrorMsg ?? resSecond.ErrorMsg ?? "Result cannot be created with the current constraints.";
+                }
                 else if (minDev == devA)
                 {
                     resultA = candA;
@@ -228,7 +259,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (resultA == null && resultB == null)
             {
-                RhinoApp.WriteLine("Curve(s) within tolerance could not be created, so they were not modified.");
+                RhinoApp.WriteLine(lastErrorMsg ?? "Result cannot be created with the current constraints.");
                 doc.Views.RedrawEnabled = true;
                 return Result.Failure;
             }
@@ -262,14 +293,17 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (MatchCrvOptions.Echo || MatchCrvOptions.Debug)
             {
+                int prec = doc.ModelDistanceDisplayPrecision;
+                
                 double? radPre = RadiusMinimaMath.GetMinimumRadius(originalCrv);
                 double? radPost = RadiusMinimaMath.GetMinimumRadius(newCrv);
-                double dev = CurveMatchMath.GetMaximumDeviation(originalCrv, newCrv);
+                double maxDev = CurveMatchMath.GetMaximumDeviation(originalCrv, newCrv);
+                double avgDev = CurveMatchMath.GetAverageDeviation(originalCrv, newCrv);
 
-                string sRadPre = radPre.HasValue ? FormatUtils.FormatDistance(radPre.Value, doc.ModelDistanceDisplayPrecision) : "(None)";
-                string sRadPost = radPost.HasValue ? FormatUtils.FormatDistance(radPost.Value, doc.ModelDistanceDisplayPrecision) : "(None)";
+                string sRadPre = radPre.HasValue ? FormatUtils.FormatDistance(radPre.Value, prec) : "(None)";
+                string sRadPost = radPost.HasValue ? FormatUtils.FormatDistance(radPost.Value, prec) : "(None)";
 
-                RhinoApp.WriteLine($"MinimumRadius: {sRadPre} -> {sRadPost}  Deviation: {FormatUtils.FormatDistance(dev, doc.ModelDistanceDisplayPrecision)}");
+                RhinoApp.WriteLine($"Min Radius: {sRadPre} -> {sRadPost}  |  Max Dev: {FormatUtils.FormatDistance(maxDev, prec)}  |  Avg Dev: {FormatUtils.FormatDistance(avgDev, prec)}");
             }
         }
 
@@ -295,7 +329,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 vB.Tangent = -vB.Tangent;
             }
 
-            int? level = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, 2.0, curvatureMagTolPct);
+            int? level = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvatureMagTolPct);
             
             return level.HasValue && level.Value >= targetContinuity;
         }

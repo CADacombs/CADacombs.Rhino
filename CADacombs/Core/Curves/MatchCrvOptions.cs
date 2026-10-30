@@ -8,24 +8,33 @@ namespace CADacombs.Core.Curves
     {
         public static Point? WindowLocation { get; set; }
 
+        // 0 = Position, 1 = Tangency, 2 = Curvature
         public static int Continuity { get; set; } = 1; 
+        
         public static double PosTol { get; set; } = -1.0; 
         public static double AngleTolDeg { get; set; } = -1.0; 
         public static double CurvatureMagTolPct { get; set; } = 5.0; 
         public static bool SkipIfAlreadyAtContinuity { get; set; } = true;
         
+        // 0 = None, 1 = Position, 2 = Tangency, 3 = Curvature, 4 = Periodic
         public static int PreserveOtherEnd { get; set; } = 2; 
+        
+        // 0 = First curve, 1 = Average curves, 2 = Minimize deviation (Either/Both)
         public static int ModifyMode { get; set; } = 2; 
 
         public static bool LimitCrvDev { get; set; } = true;
         public static double DevTol { get; set; } = -1.0;
-        public static bool DeformLines { get; set; } = false;
         
-        public static bool RebuildRationals { get; set; } = false;
-        public static bool KeepArcs { get; set; } = true;
+        public static bool DeformLines { get; set; } = false;
+        public static bool DeformArcs { get; set; } = false;
+        
+        // 0 = Deg, 1 = Span ct, 2 = None
+        public static int IncrAsNeeded { get; set; } = 0; 
+        
+        public static bool PreventExtraInflections { get; set; } = false;
 
         public static bool DeleteInput { get; set; } = true;
-        public static bool Echo { get; set; } = true;
+        public static bool Echo { get; set; } = true; // Excluded from Load/Save so it resets default for script runners
         public static bool Debug { get; set; } = false;
 
         public static void Load(Rhino.PersistentSettings settings)
@@ -36,7 +45,7 @@ namespace CADacombs.Core.Curves
             if (PosTol <= 0) PosTol = 0.0001 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
 
             AngleTolDeg = settings.GetDouble("MatchCrv_AngleTolDeg", AngleTolDeg);
-            if (AngleTolDeg <= 0) AngleTolDeg = RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
+            if (AngleTolDeg <= 0) AngleTolDeg = 0.1 * RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
 
             CurvatureMagTolPct = settings.GetDouble("MatchCrv_CurvatureMagTolPct", CurvatureMagTolPct);
 
@@ -49,11 +58,11 @@ namespace CADacombs.Core.Curves
             if (DevTol <= 0) DevTol = 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
 
             DeformLines = settings.GetBool("MatchCrv_DeformLines", DeformLines);
-            RebuildRationals = settings.GetBool("MatchCrv_RebuildRationals", RebuildRationals);
-            KeepArcs = settings.GetBool("MatchCrv_KeepArcs", KeepArcs);
+            DeformArcs = settings.GetBool("MatchCrv_DeformArcs", DeformArcs);
+            IncrAsNeeded = settings.GetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
+            PreventExtraInflections = settings.GetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
 
             DeleteInput = settings.GetBool("MatchCrv_DeleteInput", DeleteInput);
-            Echo = settings.GetBool("MatchCrv_Echo", Echo);
             Debug = settings.GetBool("MatchCrv_Debug", Debug);
             
             int x = settings.GetInteger("MatchCrv_WindowX", -1);
@@ -75,11 +84,11 @@ namespace CADacombs.Core.Curves
             settings.SetDouble("MatchCrv_DevTol", DevTol);
             
             settings.SetBool("MatchCrv_DeformLines", DeformLines);
-            settings.SetBool("MatchCrv_RebuildRationals", RebuildRationals);
-            settings.SetBool("MatchCrv_KeepArcs", KeepArcs);
+            settings.SetBool("MatchCrv_DeformArcs", DeformArcs);
+            settings.SetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
+            settings.SetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
 
             settings.SetBool("MatchCrv_DeleteInput", DeleteInput);
-            settings.SetBool("MatchCrv_Echo", Echo);
             settings.SetBool("MatchCrv_Debug", Debug);
 
             if (WindowLocation.HasValue)

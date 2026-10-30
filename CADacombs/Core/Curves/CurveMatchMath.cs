@@ -8,7 +8,7 @@ namespace CADacombs.Core.Curves
 {
     public static class CurveMatchMath
     {
-        public static NurbsCurve MatchOneCurve(
+        public static (NurbsCurve Result, string ErrorMsg) MatchOneCurve(
             Curve crvToMod, 
             Curve crvRef, 
             bool modT1, 
@@ -16,23 +16,55 @@ namespace CADacombs.Core.Curves
             int continuity, 
             int preserveOtherEnd, 
             bool deformLines, 
+            bool deformArcs,
+            int incrAsNeeded,
             double devTol,
+            bool preventExtraInflections,
             bool debug = false)
         {
             NurbsCurve ncMod = crvToMod.ToNurbsCurve();
             NurbsCurve ncRef = crvRef.ToNurbsCurve();
             
-            if (ncMod == null || ncRef == null) return null;
+            if (ncMod == null || ncRef == null) return (null, "Failed to convert curves to NURBS.");
 
             int minCpNeeded = preserveOtherEnd + continuity + 1;
 
-            if (deformLines && ncMod.Points.Count < minCpNeeded && ncMod.Points.Count == 2)
+            if (crvToMod.IsArc())
             {
-                var ts = ncMod.DivideByCount(minCpNeeded - 1, true);
-                if (ts != null)
+                if (!deformArcs) { ncMod.Dispose(); ncRef.Dispose(); return (null, "Result cannot be created because the curve is an arc and Deform arcs is disabled."); }
+                Curve rebuilt = crvToMod.Rebuild(6, 5, false);
+                if (rebuilt != null) { ncMod.Dispose(); ncMod = rebuilt.ToNurbsCurve(); }
+            }
+            else if (crvToMod.IsLinear() && ncMod.Points.Count < minCpNeeded)
+            {
+                if (!deformLines) { ncMod.Dispose(); ncRef.Dispose(); return (null, "Result cannot be created because the curve is a line and Deform lines is disabled."); }
+                int ptsNeeded = minCpNeeded - ncMod.Points.Count;
+                
+                if (incrAsNeeded == 0) ncMod.IncreaseDegree(ncMod.Degree + ptsNeeded);
+                else if (incrAsNeeded == 1)
                 {
-                    var pts = ts.Select(t => ncMod.PointAt(t)).ToList();
-                    ncMod = NurbsCurve.Create(false, 3, pts);
+                    var ts = ncMod.DivideByCount(ptsNeeded + 1, true);
+                    if (ts != null) for (int k = 1; k < ts.Length - 1; k++) ncMod.Knots.InsertKnot(ts[k], 1);
+                }
+                else
+                {
+                    ncMod.Dispose(); ncRef.Dispose(); 
+                    return (null, "Result cannot be created because the line requires more control points and Incr as needed is None.");
+                }
+            }
+            else if (ncMod.SpanCount == 1 && ncMod.Degree == 3 && ncMod.Points.Count < minCpNeeded)
+            {
+                int ptsNeeded = minCpNeeded - ncMod.Points.Count;
+                if (incrAsNeeded == 0) ncMod.IncreaseDegree(ncMod.Degree + ptsNeeded);
+                else if (incrAsNeeded == 1)
+                {
+                    var ts = ncMod.DivideByCount(ptsNeeded + 1, true);
+                    if (ts != null) for (int k = 1; k < ts.Length - 1; k++) ncMod.Knots.InsertKnot(ts[k], 1);
+                }
+                else
+                {
+                    ncMod.Dispose(); ncRef.Dispose(); 
+                    return (null, "Result cannot be created because the curve requires more control points and Incr as needed is None.");
                 }
             }
 
@@ -40,7 +72,7 @@ namespace CADacombs.Core.Curves
             {
                 ncMod.Dispose();
                 ncRef.Dispose();
-                return null;
+                return (null, "Result cannot be created because the curve does not have enough control points for the requested continuity.");
             }
 
             double tRef = refT1 ? ncRef.Domain.T1 : ncRef.Domain.T0;
@@ -71,7 +103,6 @@ namespace CADacombs.Core.Curves
                 int idxCpPosRef = refT1 ? ncRef.Points.Count - 1 : 0;
                 int idxCpTanRef = refT1 ? ncRef.Points.Count - 2 : 1;
 
-                // Cand 1: ClosestPoint
                 NurbsCurve cand1 = (NurbsCurve)ncMod.Duplicate();
                 cand1.Points.SetPoint(idxCpPosOne, ncRef.Points[idxCpPosRef].Location);
                 Line tanLine = new Line(ncRef.Points[idxCpPosRef].Location, ncRef.Points[idxCpTanRef].Location);
@@ -87,7 +118,6 @@ namespace CADacombs.Core.Curves
                     cand1.Dispose();
                 }
 
-                // Cand 2: SetEndCondition (Mathematically identical to _Match for One Curve)
                 NurbsCurve cand2 = (NurbsCurve)ncMod.Duplicate();
                 cand2.SetEndCondition(modT1, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptTarget, tanTarget);
                 candidates.Add((cand2, "Tangency: SetEndCondition"));
@@ -101,6 +131,10 @@ namespace CADacombs.Core.Curves
 
             NurbsCurve winner = null;
             double bestAvgDev = double.MaxValue;
+            
+            int origInf = crvToMod.InflectionPoints()?.Length ?? 0;
+            bool rejectedByInflection = false;
+            bool rejectedByDev = false;
 
             if (debug) RhinoApp.WriteLine($"--- MatchOneCurve Candidates Evaluated ({candidates.Count}) ---");
 
@@ -118,9 +152,22 @@ namespace CADacombs.Core.Curves
                 if (debug) 
                     RhinoApp.WriteLine($" {cand.Desc}\n    AvgDev: {avgDev:F6} | MaxDev: {maxDev:F6} | MinRad: {(minRad.HasValue ? minRad.Value.ToString("F6") : "N/A")} | P0-P1 Dist: {p0p1Dist:F6}");
 
+                if (preventExtraInflections)
+                {
+                    int candInf = cand.Curve.InflectionPoints()?.Length ?? 0;
+                    if (candInf > origInf)
+                    {
+                        if (debug) RhinoApp.WriteLine($"    [Rejected] Added extra inflection points (Original: {origInf}, New: {candInf})");
+                        cand.Curve.Dispose();
+                        rejectedByInflection = true;
+                        continue;
+                    }
+                }
+
                 if (maxDev > devTol) 
                 {
                     cand.Curve.Dispose();
+                    rejectedByDev = true;
                     continue;
                 }
 
@@ -145,10 +192,18 @@ namespace CADacombs.Core.Curves
             ncMod.Dispose();
             ncRef.Dispose();
 
-            return winner;
+            string errorMsg = null;
+            if (winner == null)
+            {
+                if (rejectedByDev) errorMsg = "Result cannot be created because it exceeds the Crv dev limit.";
+                else if (rejectedByInflection) errorMsg = "Result cannot be created because it would add extra inflection points.";
+                else errorMsg = "Result cannot be created with the current constraints.";
+            }
+
+            return (winner, errorMsg);
         }
 
-        public static (NurbsCurve ResultA, NurbsCurve ResultB) MatchBothCurves(
+        public static (NurbsCurve ResultA, NurbsCurve ResultB, string ErrorMsg) MatchBothCurves(
             Curve crvA, 
             Curve crvB, 
             bool modT1_A, 
@@ -156,35 +211,64 @@ namespace CADacombs.Core.Curves
             int continuity, 
             int preserveOtherEnd, 
             bool deformLines, 
+            bool deformArcs,
+            int incrAsNeeded,
             double devTol,
+            bool preventExtraInflections,
             bool debug = false)
         {
             NurbsCurve ncWipA = crvA.ToNurbsCurve();
             NurbsCurve ncWipB = crvB.ToNurbsCurve();
 
-            if (ncWipA == null || ncWipB == null) return (null, null);
+            if (ncWipA == null || ncWipB == null) return (null, null, "Failed to convert curves to NURBS.");
 
             int minCpNeeded = preserveOtherEnd + continuity + 1;
+            string localErr = null;
 
-            if (deformLines)
+            void ProcessCrv(Curve origCrv, ref NurbsCurve ncWip)
             {
-                if (ncWipA.Points.Count < minCpNeeded && ncWipA.Points.Count == 2)
+                if (origCrv.IsArc())
                 {
-                    var ts = ncWipA.DivideByCount(minCpNeeded - 1, true);
-                    if (ts != null) ncWipA = NurbsCurve.Create(false, 3, ts.Select(t => ncWipA.PointAt(t)).ToList());
+                    if (!deformArcs) { localErr = "Result cannot be created because a curve is an arc and Deform arcs is disabled."; ncWip.Dispose(); ncWip = null; return; }
+                    Curve rebuilt = origCrv.Rebuild(6, 5, false);
+                    if (rebuilt != null) { ncWip.Dispose(); ncWip = rebuilt.ToNurbsCurve(); }
                 }
-                if (ncWipB.Points.Count < minCpNeeded && ncWipB.Points.Count == 2)
+                else if (origCrv.IsLinear() && ncWip.Points.Count < minCpNeeded)
                 {
-                    var ts = ncWipB.DivideByCount(minCpNeeded - 1, true);
-                    if (ts != null) ncWipB = NurbsCurve.Create(false, 3, ts.Select(t => ncWipB.PointAt(t)).ToList());
+                    if (!deformLines) { localErr = "Result cannot be created because a curve is a line and Deform lines is disabled."; ncWip.Dispose(); ncWip = null; return; }
+                    int ptsNeeded = minCpNeeded - ncWip.Points.Count;
+                    if (incrAsNeeded == 0) ncWip.IncreaseDegree(ncWip.Degree + ptsNeeded);
+                    else if (incrAsNeeded == 1)
+                    {
+                        var ts = ncWip.DivideByCount(ptsNeeded + 1, true);
+                        if (ts != null) for (int k = 1; k < ts.Length - 1; k++) ncWip.Knots.InsertKnot(ts[k], 1);
+                    }
+                    else { localErr = "Result cannot be created because a line requires more control points and Incr as needed is None."; ncWip.Dispose(); ncWip = null; return; }
+                }
+                else if (ncWip.SpanCount == 1 && ncWip.Degree == 3 && ncWip.Points.Count < minCpNeeded)
+                {
+                    int ptsNeeded = minCpNeeded - ncWip.Points.Count;
+                    if (incrAsNeeded == 0) ncWip.IncreaseDegree(ncWip.Degree + ptsNeeded);
+                    else if (incrAsNeeded == 1)
+                    {
+                        var ts = ncWip.DivideByCount(ptsNeeded + 1, true);
+                        if (ts != null) for (int k = 1; k < ts.Length - 1; k++) ncWip.Knots.InsertKnot(ts[k], 1);
+                    }
+                    else { localErr = "Result cannot be created because a curve requires more control points and Incr as needed is None."; ncWip.Dispose(); ncWip = null; return; }
                 }
             }
 
+            ProcessCrv(crvA, ref ncWipA);
+            if (localErr != null) { ncWipB?.Dispose(); return (null, null, localErr); }
+
+            ProcessCrv(crvB, ref ncWipB);
+            if (localErr != null) { ncWipA?.Dispose(); return (null, null, localErr); }
+
             if (ncWipA.Points.Count < minCpNeeded || ncWipB.Points.Count < minCpNeeded)
             {
-                ncWipA.Dispose();
-                ncWipB.Dispose();
-                return (null, null);
+                ncWipA?.Dispose();
+                ncWipB?.Dispose();
+                return (null, null, "Result cannot be created because a curve does not have enough control points for the requested continuity.");
             }
 
             double tA = modT1_A ? ncWipA.Domain.T1 : ncWipA.Domain.T0;
@@ -207,6 +291,21 @@ namespace CADacombs.Core.Curves
             Vector3d curvA = ncWipA.CurvatureAt(tA);
             Vector3d curvB = ncWipB.CurvatureAt(tB);
 
+            Vector3d tanTargetA = Vector3d.Unset;
+            Vector3d tanTargetB = Vector3d.Unset;
+
+            if (continuity >= 1)
+            {
+                tanTargetB = modT1_A == modT1_B ? (0.5 * -tanA) + (0.5 * tanB) : (0.5 * tanA) + (0.5 * tanB);
+                tanTargetA = modT1_A == modT1_B ? -tanTargetB : tanTargetB;
+
+                if (debug)
+                {
+                    RhinoApp.WriteLine($"[Debug] Shared Tangent Target A: {tanTargetA}");
+                    RhinoApp.WriteLine($"[Debug] Shared Tangent Target B: {tanTargetB}");
+                }
+            }
+
             var candidates = new List<(NurbsCurve CandA, NurbsCurve CandB, string Desc)>();
 
             if (continuity == 0)
@@ -219,10 +318,6 @@ namespace CADacombs.Core.Curves
             }
             else if (continuity == 1)
             {
-                Vector3d tanTargetB = modT1_A == modT1_B ? (0.5 * -tanA) + (0.5 * tanB) : (0.5 * tanA) + (0.5 * tanB);
-                Vector3d tanTargetA = modT1_A == modT1_B ? -tanTargetB : tanTargetB;
-
-                // Cand 1: ClosestPoint
                 NurbsCurve cand1A = (NurbsCurve)ncWipA.Duplicate();
                 NurbsCurve cand1B = (NurbsCurve)ncWipB.Duplicate();
                 cand1A.Points.SetPoint(idxCpPosA, ptAvg);
@@ -243,14 +338,12 @@ namespace CADacombs.Core.Curves
                     cand1A.Dispose(); cand1B.Dispose();
                 }
 
-                // Cand 2: SetEndCondition
                 NurbsCurve cand2A = (NurbsCurve)ncWipA.Duplicate();
                 NurbsCurve cand2B = (NurbsCurve)ncWipB.Duplicate();
                 cand2A.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetA);
                 cand2B.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Tangency, ptAvg, tanTargetB);
                 candidates.Add((cand2A, cand2B, "Both Tangency: SetEndCondition"));
 
-                // Cand 3: Preserve orig P0-P1 (Kept for Both because vectors diverge)
                 NurbsCurve cand3A = (NurbsCurve)cand2A.Duplicate();
                 NurbsCurve cand3B = (NurbsCurve)cand2B.Duplicate();
                 
@@ -264,18 +357,30 @@ namespace CADacombs.Core.Curves
             }
             else if (continuity == 2)
             {
-                Vector3d curvTargetB = modT1_A == modT1_B ? (0.5 * -curvA) + (0.5 * curvB) : (0.5 * curvA) + (0.5 * curvB);
-                Vector3d curvTargetA = modT1_A == modT1_B ? -curvTargetB : curvTargetB;
+                Vector3d curvTarget = (0.5 * curvA) + (0.5 * curvB);
+
+                if (debug)
+                {
+                    RhinoApp.WriteLine($"[Debug] Shared Curvature Target: {curvTarget}");
+                }
 
                 NurbsCurve cand1A = (NurbsCurve)ncWipA.Duplicate();
                 NurbsCurve cand1B = (NurbsCurve)ncWipB.Duplicate();
-                cand1A.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, ncWipA.TangentAt(tA), curvTargetA);
-                cand1B.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, ncWipB.TangentAt(tB), curvTargetB);
+                
+                cand1A.SetEndCondition(modT1_A, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, tanTargetA, curvTarget);
+                cand1B.SetEndCondition(modT1_B, NurbsCurve.NurbsCurveEndConditionType.Curvature, ptAvg, tanTargetB, curvTarget);
+                
                 candidates.Add((cand1A, cand1B, "Both Curvature: SetEndCondition"));
             }
 
             (NurbsCurve ResultA, NurbsCurve ResultB) winner = (null, null);
             double bestAvgDevSum = double.MaxValue;
+            
+            int origInfA = crvA.InflectionPoints()?.Length ?? 0;
+            int origInfB = crvB.InflectionPoints()?.Length ?? 0;
+            
+            bool rejectedByInflection = false;
+            bool rejectedByDev = false;
 
             if (debug) RhinoApp.WriteLine($"--- MatchBothCurves Candidates Evaluated ({candidates.Count}) ---");
 
@@ -303,10 +408,25 @@ namespace CADacombs.Core.Curves
                 if (debug) 
                     RhinoApp.WriteLine($" {desc}\n    AvgDev Sum: {avgDevSum:F6} (A:{avgDevA:F6}, B:{avgDevB:F6}) | MaxDev: {maxDev:F6} | MinRad: {(minRad != double.MinValue ? minRad.ToString("F6") : "N/A")} | P0-P1 Dist: (A:{p0p1A:F6}, B:{p0p1B:F6})");
 
+                if (preventExtraInflections)
+                {
+                    int candInfA = candA.InflectionPoints()?.Length ?? 0;
+                    int candInfB = candB.InflectionPoints()?.Length ?? 0;
+                    if (candInfA > origInfA || candInfB > origInfB)
+                    {
+                        if (debug) RhinoApp.WriteLine($"    [Rejected] Added extra inflection points (OrigA: {origInfA}, OrigB: {origInfB} | CandA: {candInfA}, CandB: {candInfB})");
+                        candA.Dispose();
+                        candB.Dispose();
+                        rejectedByInflection = true;
+                        continue;
+                    }
+                }
+
                 if (maxDev > devTol) 
                 {
                     if (candA != winner.ResultA) candA.Dispose();
                     if (candB != winner.ResultB) candB.Dispose();
+                    rejectedByDev = true;
                     continue;
                 }
 
@@ -327,7 +447,15 @@ namespace CADacombs.Core.Curves
             ncWipA.Dispose();
             ncWipB.Dispose();
 
-            return winner;
+            string errorMsg = null;
+            if (winner.ResultA == null)
+            {
+                if (rejectedByDev) errorMsg = "Result cannot be created because it exceeds the Crv dev limit.";
+                else if (rejectedByInflection) errorMsg = "Result cannot be created because it would add extra inflection points.";
+                else errorMsg = "Result cannot be created with the current constraints.";
+            }
+
+            return (winner.ResultA, winner.ResultB, errorMsg);
         }
 
         public static double GetMaximumDeviation(Curve a, Curve b)
