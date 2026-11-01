@@ -147,7 +147,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
             _chkSpansToLines = new CheckBox { Text = "Convert spans to lines", Checked = SimplifyCrvOptions.ConvertLines };
             _chkSpansToArcs = new CheckBox { Text = "Convert spans to arcs", Checked = SimplifyCrvOptions.ConvertArcs };
-            _chkAdjustG1 = new CheckBox { Text = "Adjust G1", Checked = SimplifyCrvOptions.AdjustG1 };
+            _chkAdjustG1 = new CheckBox { Text = "Smooth joints to tangency", Checked = SimplifyCrvOptions.AdjustG1 };
             _chkSpansToBeziers = new CheckBox { Text = "Convert NURBS sections to Beziers", Checked = SimplifyCrvOptions.ConvertBeziers };
             _chkMakeUniform = new CheckBox { Text = "Make remaining NURBS spans uniform", Checked = SimplifyCrvOptions.MakeUniform };
             _chkSplitAllKnots = new CheckBox { Text = "Split at all multiple knots", Checked = SimplifyCrvOptions.SplitAllKnots };
@@ -322,7 +322,7 @@ namespace CADacombs.Commands.Modeling.Curves
             
             _chkSpansToLines.Enabled = globalEnabled;
             _chkSpansToArcs.Enabled = globalEnabled;
-            _chkAdjustG1.Enabled = false; // TODO: Set to globalEnabled once smoothing routine is added.
+            _chkAdjustG1.Enabled = globalEnabled;
             _chkSpansToBeziers.Enabled = globalEnabled;
             _chkMakeUniform.Enabled = globalEnabled;
             _chkSplitAllKnots.Enabled = globalEnabled;

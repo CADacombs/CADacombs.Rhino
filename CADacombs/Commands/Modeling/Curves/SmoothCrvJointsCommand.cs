@@ -40,22 +40,29 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 go.ClearCommandOptions();
 
+                var optSmoothG2 = new OptionToggle(SmoothCrvJointsOptions.SmoothG2, "No", "Yes");
                 var optAngleTol = new OptionDouble(SmoothCrvJointsOptions.AngleTolDeg);
+                var optMagTol = new OptionDouble(SmoothCrvJointsOptions.CurvatureMagTolPct);
                 var optSkip = new OptionToggle(SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity, "Process", "Skip");
                 var optLimitDev = new OptionToggle(SmoothCrvJointsOptions.LimitCrvDev, "No", "Yes");
                 var optDevTol = new OptionDouble(SmoothCrvJointsOptions.DevTol);
-                var optAction = new OptionToggle(SmoothCrvJointsOptions.ReplaceInput, "Add", "Replace");
+                var optAction = new OptionToggle(SmoothCrvJointsOptions.DeleteInput, "No", "Yes");
                 var optEcho = new OptionToggle(SmoothCrvJointsOptions.Echo, "No", "Yes");
                 var optDebug = new OptionToggle(SmoothCrvJointsOptions.Debug, "No", "Yes");
 
+                go.AddOptionToggle("SmoothG2", ref optSmoothG2);
                 go.AddOptionDouble("AngleTol", ref optAngleTol);
+                
+                if (SmoothCrvJointsOptions.SmoothG2)
+                    go.AddOptionDouble("VectMagRelDiffPct", ref optMagTol);
+                    
                 go.AddOptionToggle("IfAlreadyAtContinuity", ref optSkip);
                 go.AddOptionToggle("LimitCrvDev", ref optLimitDev);
                 
                 if (SmoothCrvJointsOptions.LimitCrvDev)
                     go.AddOptionDouble("DevTol", ref optDevTol);
                 
-                go.AddOptionToggle("Action", ref optAction);
+                go.AddOptionToggle("DeleteInput", ref optAction);
                 go.AddOptionToggle("Echo", ref optEcho);
                 go.AddOptionToggle("Debug", ref optDebug);
 
@@ -71,9 +78,13 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
                 else if (res == GetResult.Option)
                 {
+                    SmoothCrvJointsOptions.SmoothG2 = optSmoothG2.CurrentValue;
+
                     SmoothCrvJointsOptions.AngleTolDeg = optAngleTol.CurrentValue;
                     if (SmoothCrvJointsOptions.AngleTolDeg <= 0) 
                         SmoothCrvJointsOptions.AngleTolDeg = 0.1 * RhinoMath.ToDegrees(doc.ModelAngleToleranceRadians);
+
+                    SmoothCrvJointsOptions.CurvatureMagTolPct = optMagTol.CurrentValue;
 
                     SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity = optSkip.CurrentValue;
                     SmoothCrvJointsOptions.LimitCrvDev = optLimitDev.CurrentValue;
@@ -82,7 +93,7 @@ namespace CADacombs.Commands.Modeling.Curves
                     if (SmoothCrvJointsOptions.DevTol < 0) 
                         SmoothCrvJointsOptions.DevTol = 0.1 * doc.ModelAbsoluteTolerance;
 
-                    SmoothCrvJointsOptions.ReplaceInput = optAction.CurrentValue;
+                    SmoothCrvJointsOptions.DeleteInput = optAction.CurrentValue;
                     SmoothCrvJointsOptions.Echo = optEcho.CurrentValue;
                     SmoothCrvJointsOptions.Debug = optDebug.CurrentValue;
 
@@ -111,9 +122,11 @@ namespace CADacombs.Commands.Modeling.Curves
                     RhinoApp.WriteLine($"--- Processing PolyCurve ({originalPc.SegmentCount} Segments) ---");
                 }
 
-                Curve newCurve = PolyCurveG1Solver.Solve(
+                Curve newCurve = PolyCurveSmoothingSolver.Solve(
                     originalPc,
+                    SmoothCrvJointsOptions.SmoothG2,
                     SmoothCrvJointsOptions.AngleTolDeg,
+                    SmoothCrvJointsOptions.CurvatureMagTolPct,
                     SmoothCrvJointsOptions.DevTol,
                     SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity,
                     SmoothCrvJointsOptions.LimitCrvDev,
@@ -138,7 +151,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
         private void ProcessResults(RhinoDoc doc, ObjRef objRef, Curve originalCrv, Curve newCrv)
         {
-            if (SmoothCrvJointsOptions.ReplaceInput)
+            if (SmoothCrvJointsOptions.DeleteInput)
             {
                 if (doc.Objects.Replace(objRef.ObjectId, newCrv))
                 {

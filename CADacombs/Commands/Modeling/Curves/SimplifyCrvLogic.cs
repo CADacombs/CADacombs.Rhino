@@ -237,38 +237,27 @@ namespace CADacombs.Commands.Modeling.Curves
             return resultPc;
         }
 
-        private static Curve ApplyAdjustG1(Curve curve, double distTol, double angleTol)
+        private static Curve ApplyAdjustG1(Curve curve, double distTol, double angleTolDeg)
         {
             if (curve is PolyCurve pc)
             {
-                PolyCurve newPc = new PolyCurve();
-                bool modified = false;
-                for (int i = 0; i < pc.SegmentCount; i++)
-                {
-                    Curve seg = pc.SegmentCurve(i);
-                    bool isLineOrArc = seg is LineCurve || seg is PolylineCurve || seg is ArcCurve;
-                    bool isBezier = seg is NurbsCurve b && b.SpanCount == 1 && !b.IsRational;
-                    
-                    if (!isLineOrArc && !isBezier)
-                    {
-                        var simplified = seg.Simplify(CurveSimplifyOptions.AdjustG1, distTol, angleTol);
-                        if (simplified != null)
-                        {
-                            newPc.Append(simplified);
-                            modified = true;
-                            continue;
-                        }
-                    }
-                    newPc.Append(seg);
-                }
-                return modified ? newPc : curve;
+                // Route through our new custom solver. 
+                // We pass false for smoothG2 and limitCrvDev since SimplifyCrv's 
+                // current UI only requests G1 and handles deviation natively.
+                return PolyCurveSmoothingSolver.Solve(
+                    pc, 
+                    smoothG2: false, 
+                    angleTolDeg: angleTolDeg, 
+                    curvatureMagTolPct: 5.0, // Unused since G2 is false
+                    devTol: distTol, 
+                    skipIfAlreadyAtContinuity: true, 
+                    limitCrvDev: true, // Respect SimplifyCrv's distTol
+                    debug: false
+                );
             }
             else
             {
-                bool isLineOrArc = curve is LineCurve || curve is PolylineCurve || curve is ArcCurve;
-                bool isBezier = curve is NurbsCurve b && b.SpanCount == 1 && !b.IsRational;
-                
-                if (!isLineOrArc && !isBezier) return curve.Simplify(CurveSimplifyOptions.AdjustG1, distTol, angleTol) ?? curve;
+                // If it's a single span, there are no internal joints to smooth
                 return curve;
             }
         }

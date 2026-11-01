@@ -90,7 +90,7 @@ namespace CADacombs.Commands.Analysis.Curves
                 int optAdd = goOpt.AddOptionToggle("AddDots", ref optValAddDots);
                 int optDist = goOpt.AddOptionDouble("DistTol", ref optValDist);
                 int optG1 = goOpt.AddOptionDouble("VectAngleDiffTol", ref optValAngDeg);
-                int optMag = goOpt.AddOptionDouble("VectMagTolPct", ref optValVectMagPct);
+                int optMag = goOpt.AddOptionDouble("VectMagRelDiffPct", ref optValVectMagPct);
                 int optH = goOpt.AddOptionInteger("TextHeight", ref optValHeight);
 
                 var res = goOpt.Get();
