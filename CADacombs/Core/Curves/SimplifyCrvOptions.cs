@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using Eto.Drawing;
 using Rhino;
 
-namespace CADacombs.Commands.Modeling.Curves
+namespace CADacombs.Core.Curves
 {
     public static class SimplifyCrvOptions
     {

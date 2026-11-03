@@ -19,6 +19,8 @@ namespace CADacombs.Commands.Modeling.Curves
 
         public override string EnglishName => "ccSmoothPolycrvJoints";
 
+        private readonly string[] _continuityOptions = { "G1", "G2WithG1Fallback", "G2Only" };
+
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             SmoothCrvJointsOptions.Load(this.Settings);
@@ -40,8 +42,9 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 go.ClearCommandOptions();
 
-                var optSmoothG2 = new OptionToggle(SmoothCrvJointsOptions.SmoothG2, "No", "Yes");
-                var optAngleTol = new OptionDouble(SmoothCrvJointsOptions.AngleTolDeg);
+                int optContinuity = go.AddOptionList("Continuity", _continuityOptions, SmoothCrvJointsOptions.ContinuityMode);
+                
+                var optAngleTol = new OptionDouble(SmoothCrvJointsOptions.MinKinkAngle);
                 var optMagTol = new OptionDouble(SmoothCrvJointsOptions.CurvatureMagTolPct);
                 var optSkip = new OptionToggle(SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity, "Process", "Skip");
                 var optLimitDev = new OptionToggle(SmoothCrvJointsOptions.LimitCrvDev, "No", "Yes");
@@ -50,10 +53,10 @@ namespace CADacombs.Commands.Modeling.Curves
                 var optEcho = new OptionToggle(SmoothCrvJointsOptions.Echo, "No", "Yes");
                 var optDebug = new OptionToggle(SmoothCrvJointsOptions.Debug, "No", "Yes");
 
-                go.AddOptionToggle("SmoothG2", ref optSmoothG2);
-                go.AddOptionDouble("AngleTol", ref optAngleTol);
+                go.AddOptionDouble("MinKinkAngle", ref optAngleTol);
                 
-                if (SmoothCrvJointsOptions.SmoothG2)
+                // Show Vector Magnitude tolerance only if attempting G2
+                if (SmoothCrvJointsOptions.ContinuityMode >= 1)
                     go.AddOptionDouble("VectMagRelDiffPct", ref optMagTol);
                     
                 go.AddOptionToggle("IfAlreadyAtContinuity", ref optSkip);
@@ -78,14 +81,17 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
                 else if (res == GetResult.Option)
                 {
-                    SmoothCrvJointsOptions.SmoothG2 = optSmoothG2.CurrentValue;
-
-                    SmoothCrvJointsOptions.AngleTolDeg = optAngleTol.CurrentValue;
-                    if (SmoothCrvJointsOptions.AngleTolDeg <= 0) 
-                        SmoothCrvJointsOptions.AngleTolDeg = 0.1 * RhinoMath.ToDegrees(doc.ModelAngleToleranceRadians);
+                    var opt = go.Option();
+                    if (opt.Index == optContinuity)
+                    {
+                        SmoothCrvJointsOptions.ContinuityMode = opt.CurrentListOptionIndex;
+                    }
+                    
+                    SmoothCrvJointsOptions.MinKinkAngle = optAngleTol.CurrentValue;
+                    if (SmoothCrvJointsOptions.MinKinkAngle <= 0) 
+                        SmoothCrvJointsOptions.MinKinkAngle = 5.0;
 
                     SmoothCrvJointsOptions.CurvatureMagTolPct = optMagTol.CurrentValue;
-
                     SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity = optSkip.CurrentValue;
                     SmoothCrvJointsOptions.LimitCrvDev = optLimitDev.CurrentValue;
                     
@@ -124,8 +130,8 @@ namespace CADacombs.Commands.Modeling.Curves
 
                 Curve newCurve = PolyCurveSmoothingSolver.Solve(
                     originalPc,
-                    SmoothCrvJointsOptions.SmoothG2,
-                    SmoothCrvJointsOptions.AngleTolDeg,
+                    SmoothCrvJointsOptions.ContinuityMode,
+                    SmoothCrvJointsOptions.MinKinkAngle,
                     SmoothCrvJointsOptions.CurvatureMagTolPct,
                     SmoothCrvJointsOptions.DevTol,
                     SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity,

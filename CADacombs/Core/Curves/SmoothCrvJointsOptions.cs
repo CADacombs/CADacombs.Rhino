@@ -5,10 +5,11 @@ namespace CADacombs.Core.Curves
 {
     public static class SmoothCrvJointsOptions
     {
-        public static bool SmoothG2 { get; set; } = false; 
+        // 0: G1, 1: G2WithG1Fallback, 2: G2Only
+        public static int ContinuityMode { get; set; } = 0; 
         
-        public static double AngleTolDeg { get; set; } = -1.0;
-        public static double CurvatureMagTolPct { get; set; } = 5.0; // NEW
+        public static double MinKinkAngle { get; set; } = 5.0;
+        public static double CurvatureMagTolPct { get; set; } = 5.0; 
         
         public static bool SkipIfAlreadyAtContinuity { get; set; } = true;
         
@@ -22,10 +23,10 @@ namespace CADacombs.Core.Curves
 
         public static void Load(Rhino.PersistentSettings settings)
         {
-            SmoothG2 = settings.GetBool("SmoothJoints_SmoothG2", SmoothG2);
+            ContinuityMode = settings.GetInteger("SmoothJoints_ContinuityMode", ContinuityMode);
             
-            AngleTolDeg = settings.GetDouble("SmoothJoints_AngleTolDeg", AngleTolDeg);
-            if (AngleTolDeg <= 0) AngleTolDeg = 1.0 * RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
+            MinKinkAngle = settings.GetDouble("SmoothJoints_AngleTolDeg", MinKinkAngle);
+            if (MinKinkAngle <= 0) MinKinkAngle = 1.0 * RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
 
             CurvatureMagTolPct = settings.GetDouble("SmoothJoints_CurvatureMagTolPct", CurvatureMagTolPct);
 
@@ -41,8 +42,8 @@ namespace CADacombs.Core.Curves
 
         public static void Save(Rhino.PersistentSettings settings)
         {
-            settings.SetBool("SmoothJoints_SmoothG2", SmoothG2);
-            settings.SetDouble("SmoothJoints_AngleTolDeg", AngleTolDeg);
+            settings.SetInteger("SmoothJoints_ContinuityMode", ContinuityMode);
+            settings.SetDouble("SmoothJoints_AngleTolDeg", MinKinkAngle);
             settings.SetDouble("SmoothJoints_CurvatureMagTolPct", CurvatureMagTolPct);
             settings.SetBool("SmoothJoints_SkipIfAlready", SkipIfAlreadyAtContinuity);
             settings.SetBool("SmoothJoints_LimitCrvDev", LimitCrvDev);

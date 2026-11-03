@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using Rhino.Geometry;
 using CADacombs.Core.Curves;
 
-namespace CADacombs.Commands.Modeling.Curves
+namespace CADacombs.Core.Curves
 {
     public static class SimplifyCrvLogic
     {
@@ -246,7 +246,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 // current UI only requests G1 and handles deviation natively.
                 return PolyCurveSmoothingSolver.Solve(
                     pc, 
-                    smoothG2: false, 
+                    continuityMode: 0, 
                     angleTolDeg: angleTolDeg, 
                     curvatureMagTolPct: 5.0, // Unused since G2 is false
                     devTol: distTol, 

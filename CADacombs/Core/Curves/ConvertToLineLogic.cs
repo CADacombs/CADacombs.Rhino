@@ -6,7 +6,7 @@ using Rhino.DocObjects;
 using Rhino.Geometry;
 using CADacombs.Core.Curves;
 
-namespace CADacombs.Commands.Modeling.Curves
+namespace CADacombs.Core.Curves
 {
     public static class ConvertToLineLogic
     {

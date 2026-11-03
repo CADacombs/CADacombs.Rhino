@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Rhino.Geometry;
 
-namespace CADacombs.Commands.Modeling.Curves
+namespace CADacombs.Core.Curves
 {
     public static class PolylineOutputLogic
     {

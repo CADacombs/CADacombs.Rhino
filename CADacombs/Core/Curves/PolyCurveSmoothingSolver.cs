@@ -7,11 +7,16 @@ namespace CADacombs.Core.Curves
 {
     public static class PolyCurveSmoothingSolver
     {
+        // 1.82501207499443e-08 radians converted to degrees. 
+        // Derived from Math.Acos(1.0 - Math.Pow(2, -52)) where 2^-52 is double-precision machine epsilon.
+        // At this angle, the dot product of two vectors evaluates mathematically to 1.0.
+        private const double PerfectG1TolDeg = 1.0456565158694086e-06;
+
         public static Curve Solve(
             PolyCurve polyCurve, 
-            bool smoothG2,
+            int continuityMode, // 0 = G1, 1 = G2WithG1Fallback, 2 = G2Only
             double angleTolDeg, 
-            double curvatureMagTolPct, // NEW
+            double curvatureMagTolPct, 
             double devTol, 
             bool skipIfAlreadyAtContinuity, 
             bool limitCrvDev, 
@@ -29,6 +34,9 @@ namespace CADacombs.Core.Curves
 
             double currentDevTol = limitCrvDev ? devTol : double.MaxValue;
             double posTol = RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+            
+            bool targetG2 = continuityMode >= 1;
+            bool allowG1Fallback = continuityMode <= 1;
 
             for (int i = 1; i < (polyCurve.IsClosed ? origSegs.Length + 1 : origSegs.Length); i++)
             {
@@ -46,17 +54,27 @@ namespace CADacombs.Core.Curves
                     continue;
                 }
 
-                // Analyze current continuity
                 var vA = ContinuityUtils.GetContinuityVectorsAt(segA, segA.Domain.T1, CurveEvaluationSide.Below);
                 var vB = ContinuityUtils.GetContinuityVectorsAt(segB, segB.Domain.T0, CurveEvaluationSide.Above);
-                int? gLevel = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvatureMagTolPct);
-                int currentCont = gLevel ?? 0;
+                
+                // 1. Check against the user's upper limit to protect intentional kinks
+                int? userLevel = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvatureMagTolPct);
+                if (userLevel == null || userLevel.Value < 1)
+                {
+                    if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Intentional kink or gap exceeds user AngleTol ({angleTolDeg}°).");
+                    newSegs.Add(segA);
+                    segA = segB;
+                    continue;
+                }
+
+                // 2. Check against machine epsilon for true geometric perfection
+                int? perfectLevel = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, PerfectG1TolDeg, PerfectG1TolDeg, curvatureMagTolPct);
+                int currentCont = perfectLevel ?? 0;
 
                 NurbsCurve resA = null;
                 NurbsCurve resB = null;
                 bool jointResolved = false;
 
-                // Local helper to DRY up the MatchBoth/MatchOne logic
                 bool TryMatch(int targetContinuity, out NurbsCurve rA, out NurbsCurve rB)
                 {
                     rA = null; rB = null;
@@ -78,16 +96,11 @@ namespace CADacombs.Core.Curves
                     return (rA != null || rB != null);
                 }
 
-                // ==========================================
-                // WATERFALL LOGIC
-                // ==========================================
-
-                // 1. Attempt G2 if requested
-                if (smoothG2)
+                if (targetG2)
                 {
                     if (skipIfAlreadyAtContinuity && currentCont >= 2)
                     {
-                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at G2.");
+                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at perfect G2.");
                         jointResolved = true;
                     }
                     else if (TryMatch(2, out resA, out resB))
@@ -97,12 +110,11 @@ namespace CADacombs.Core.Curves
                     }
                 }
 
-                // 2. Fallback to G1
-                if (!jointResolved)
+                if (!jointResolved && allowG1Fallback)
                 {
                     if (skipIfAlreadyAtContinuity && currentCont >= 1)
                     {
-                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at G1.");
+                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at perfect G1.");
                         jointResolved = true;
                     }
                     else if (TryMatch(1, out resA, out resB))
@@ -110,10 +122,11 @@ namespace CADacombs.Core.Curves
                         if (debug) RhinoApp.WriteLine($"Joint {i}: G1 smoothing successful.");
                         jointResolved = true;
                     }
-                    else
-                    {
-                        if (debug) RhinoApp.WriteLine($"Joint {i}: All smoothing attempts failed. Skipping.");
-                    }
+                }
+
+                if (!jointResolved && debug)
+                {
+                    RhinoApp.WriteLine($"Joint {i}: All smoothing attempts failed. Skipping.");
                 }
 
                 if (resA != null || resB != null) someSegsReplaced = true;
