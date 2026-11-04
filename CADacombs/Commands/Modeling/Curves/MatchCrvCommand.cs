@@ -190,7 +190,7 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (MatchCrvOptions.SkipIfAlreadyAtContinuity)
             {
-                if (AreCurvesAtContinuity(cA, bT1WorkEndA, cB, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct))
+                if (CurveMatchMath.AreCurvesAtContinuity(cA, bT1WorkEndA, cB, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct))
                 {
                     if (MatchCrvOptions.Echo) RhinoApp.WriteLine($"Curves already meet at G{MatchCrvOptions.Continuity} continuity. Skipping.");
                     return Result.Success;

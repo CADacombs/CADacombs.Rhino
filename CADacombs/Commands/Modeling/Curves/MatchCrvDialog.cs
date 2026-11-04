@@ -300,6 +300,33 @@ namespace CADacombs.Commands.Modeling.Curves
                 return;
             }
 
+            bool skipChecked = _chkSkipAtCont.Checked ?? false;
+            if (skipChecked)
+            {
+                double currentPosTol = double.Parse(_txtPosTol.Text);
+                double currentAngleTol = double.Parse(_txtAngleTol.Text);
+                double currentCurvTol = double.Parse(_txtCurvTol.Text);
+                int currentCont = _rblContinuity.SelectedIndex;
+
+                if (CurveMatchMath.AreCurvesAtContinuity(_crvA, _bT1WorkEndA, _crvB, _bT1WorkEndB, currentCont, currentPosTol, currentAngleTol, currentCurvTol))
+                {
+                    ResultCurveA = null;
+                    ResultCurveB = null;
+                    LastErrorMessage = $"Curves already meet at G{currentCont} continuity.";
+                    
+                    _conduit.ResultA = null;
+                    _conduit.ResultB = null;
+                    RhinoDoc.ActiveDoc.Views.Redraw();
+                    
+                    // Disable OK button as a visual indicator that no modification will occur
+                    _btnOk.Enabled = false; 
+                    _previewPending = false;
+                    
+                    if (printReport) RhinoApp.WriteLine(LastErrorMessage);
+                    return;
+                }
+            }
+
             int cont = _rblContinuity.SelectedIndex;
             int preserve = _rblPreserve.SelectedIndex;
             int modify = _rblModifyMode.SelectedIndex;

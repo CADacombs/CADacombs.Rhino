@@ -13,7 +13,7 @@ namespace CADacombs.Core.Curves
         
         public static double PosTol { get; set; } = -1.0; 
         public static double AngleTolDeg { get; set; } = -1.0; 
-        public static double CurvatureMagTolPct { get; set; } = 5.0; 
+        public static double CurvatureMagTolPct { get; set; } = 1e-8; 
         public static bool SkipIfAlreadyAtContinuity { get; set; } = true;
         
         // 0 = None, 1 = Position, 2 = Tangency, 3 = Curvature, 4 = Periodic
@@ -46,10 +46,14 @@ namespace CADacombs.Core.Curves
             Continuity = settings.GetInteger("MatchCrv_Continuity", Continuity);
             
             PosTol = settings.GetDouble("MatchCrv_PosTol", PosTol);
-            if (PosTol <= 0) PosTol = 0.0001 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+            // if (PosTol <= 0) PosTol = 0.0001 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+            if (PosTol <= 0) PosTol = RhinoMath.ZeroTolerance;
 
             AngleTolDeg = settings.GetDouble("MatchCrv_AngleTolDeg", AngleTolDeg);
-            if (AngleTolDeg <= 0) AngleTolDeg = 0.1 * RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
+            // if (AngleTolDeg <= 0) AngleTolDeg = 0.1 * RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
+            // Derived from Math.Acos(1.0 - Math.Pow(2, -52)) where 2^-52 is double-precision machine epsilon.
+            // At this angle, the dot product of two vectors evaluates mathematically to 1.0.
+            if (AngleTolDeg <= 0) AngleTolDeg = 1.2074182697257333e-06;
 
             CurvatureMagTolPct = settings.GetDouble("MatchCrv_CurvatureMagTolPct", CurvatureMagTolPct);
 

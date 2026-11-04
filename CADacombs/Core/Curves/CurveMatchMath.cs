@@ -183,6 +183,7 @@ namespace CADacombs.Core.Curves
 
             NurbsCurve winner = null;
             double bestAvgDev = double.MaxValue;
+            double bestMaxDev = double.MaxValue;
             
             int origInf = crvToMod.InflectionPoints()?.Length ?? 0;
             var origInternalCont = preserveInternalContinuity ? GetInternalContinuities(ncMod, posTol, angleTolDeg, curvTolPct) : null;
@@ -205,7 +206,7 @@ namespace CADacombs.Core.Curves
                 double p0p1Dist = continuity > 0 ? cand.Curve.Points[idxPos].Location.DistanceTo(cand.Curve.Points[idxTan].Location) : 0;
 
                 if (debug) 
-                    RhinoApp.WriteLine($" {cand.Desc}\n    AvgDev: {avgDev:F6} | MaxDev: {maxDev:F6} | MinRad: {(minRad.HasValue ? minRad.Value.ToString("F6") : "N/A")} | P0-P1 Dist: {p0p1Dist:F6}");
+                    RhinoApp.WriteLine($" {cand.Desc}\n    AvgDev: {avgDev:g} | MaxDev: {maxDev:g} | MinRad: {(minRad.HasValue ? minRad.Value.ToString("g") : "N/A")} | P0-P1 Dist: {p0p1Dist:g}");
 
                 if (preserveInternalContinuity && origInternalCont != null)
                 {
@@ -254,6 +255,7 @@ namespace CADacombs.Core.Curves
                 if (avgDev < bestAvgDev)
                 {
                     bestAvgDev = avgDev;
+                    bestMaxDev = maxDev;
                     winner?.Dispose();
                     winner = cand.Curve;
                 }
@@ -263,8 +265,9 @@ namespace CADacombs.Core.Curves
                 }
             }
 
-            if (winner != null && winner.EpsilonEquals(ncMod, 1e-12))
+            if (winner != null && bestMaxDev <= RhinoMath.ZeroTolerance)
             {
+                if (debug) RhinoApp.WriteLine($"[Debug] Discarding result: Maximum deviation ({bestMaxDev:g}) is below ZeroTolerance. No meaningful change made.");
                 winner.Dispose();
                 winner = null; 
             }
@@ -461,6 +464,8 @@ namespace CADacombs.Core.Curves
 
             (NurbsCurve ResultA, NurbsCurve ResultB) winner = (null, null);
             double bestAvgDevSum = double.MaxValue;
+            double bestMaxDevA = double.MaxValue;
+            double bestMaxDevB = double.MaxValue;
             
             int origInfA = crvA.InflectionPoints()?.Length ?? 0;
             int origInfB = crvB.InflectionPoints()?.Length ?? 0;
@@ -496,7 +501,7 @@ namespace CADacombs.Core.Curves
                 double p0p1B = continuity > 0 ? candB.Points[idxCpPosB].Location.DistanceTo(candB.Points[idxCpTanB].Location) : 0;
 
                 if (debug) 
-                    RhinoApp.WriteLine($" {desc}\n    AvgDev Sum: {avgDevSum:F6} (A:{avgDevA:F6}, B:{avgDevB:F6}) | MaxDev: {maxDev:F6} | MinRad: {(minRad != double.MinValue ? minRad.ToString("F6") : "N/A")} | P0-P1 Dist: (A:{p0p1A:F6}, B:{p0p1B:F6})");
+                    RhinoApp.WriteLine($" {desc}\n    AvgDev Sum: {avgDevSum:g} (A:{avgDevA:g}, B:{avgDevB:g}) | MaxDev: {maxDev:g} | MinRad: {(minRad != double.MinValue ? minRad.ToString("g") : "N/A")} | P0-P1 Dist: (A:{p0p1A:g}, B:{p0p1B:g})");
 
                 if (preserveInternalContinuity && (origInternalContA != null || origInternalContB != null))
                 {
@@ -570,6 +575,8 @@ namespace CADacombs.Core.Curves
                 if (avgDevSum < bestAvgDevSum)
                 {
                     bestAvgDevSum = avgDevSum;
+                    bestMaxDevA = maxDevA;
+                    bestMaxDevB = maxDevB;
                     if (winner.ResultA != null && winner.ResultA != candA) winner.ResultA.Dispose();
                     if (winner.ResultB != null && winner.ResultB != candB) winner.ResultB.Dispose();
                     winner = (candA, candB);
@@ -584,13 +591,26 @@ namespace CADacombs.Core.Curves
             ncWipA.Dispose();
             ncWipB.Dispose();
 
+            if (winner.ResultA != null && bestMaxDevA <= RhinoMath.ZeroTolerance)
+            {
+                if (debug) RhinoApp.WriteLine($"[Debug] Discarding Result A: Max deviation ({bestMaxDevA:g}) is below ZeroTolerance.");
+                winner.ResultA.Dispose();
+                winner.ResultA = null;
+            }
+            if (winner.ResultB != null && bestMaxDevB <= RhinoMath.ZeroTolerance)
+            {
+                if (debug) RhinoApp.WriteLine($"[Debug] Discarding Result B: Max deviation ({bestMaxDevB:g}) is below ZeroTolerance.");
+                winner.ResultB.Dispose();
+                winner.ResultB = null;
+            }
+
             string errorMsg = null;
-            if (winner.ResultA == null)
+            if (winner.ResultA == null && winner.ResultB == null)
             {
                 if (rejectedByDev) errorMsg = "Result cannot be created because it exceeds the Crv dev limit.";
                 else if (rejectedByInternalCont) errorMsg = "Result cannot be created because it would degrade internal continuity.";
                 else if (rejectedByInflection) errorMsg = "Result cannot be created because it would add extra inflection points.";
-                else errorMsg = "Result cannot be created with the current constraints.";
+                else errorMsg = "Result cannot be created with the current constraints (curves may already be optimized).";
             }
 
             return (winner.ResultA, winner.ResultB, errorMsg);
@@ -620,6 +640,27 @@ namespace CADacombs.Core.Curves
             }
 
             return totalDist / ts.Length;
+        }
+
+        public static bool AreCurvesAtContinuity(Curve cA, bool bT1WorkEndA, Curve cB, bool bT1WorkEndB, int targetContinuity, double posTol, double angleTolDeg, double curvatureMagTolPct)
+        {
+            double tA = bT1WorkEndA ? cA.Domain.T1 : cA.Domain.T0;
+            double tB = bT1WorkEndB ? cB.Domain.T1 : cB.Domain.T0;
+            
+            CurveEvaluationSide sideA = bT1WorkEndA ? CurveEvaluationSide.Below : CurveEvaluationSide.Above;
+            CurveEvaluationSide sideB = bT1WorkEndB ? CurveEvaluationSide.Below : CurveEvaluationSide.Above;
+
+            var vA = ContinuityUtils.GetContinuityVectorsAt(cA, tA, sideA);
+            var vB = ContinuityUtils.GetContinuityVectorsAt(cB, tB, sideB);
+
+            if (bT1WorkEndA == bT1WorkEndB) 
+            {
+                vB.Tangent = -vB.Tangent;
+            }
+
+            int? level = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvatureMagTolPct);
+            
+            return level.HasValue && level.Value >= targetContinuity;
         }
     }
 }

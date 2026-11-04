@@ -80,7 +80,7 @@ namespace CADacombs.Commands.Modeling.Curves
             _typingTimer = new UITimer { Interval = 1.0 };
             _typingTimer.Elapsed += OnTypingTimerElapsed;
 
-            Title = "CADacombs SimplifyCrv";
+            Title = "CADacombs Simplify Curve";
             Resizable = false;
             MinimumSize = new Size(300, 0); 
             AutoSize = true;

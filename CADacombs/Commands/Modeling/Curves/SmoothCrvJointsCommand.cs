@@ -44,26 +44,34 @@ namespace CADacombs.Commands.Modeling.Curves
 
                 int optContinuity = go.AddOptionList("Continuity", _continuityOptions, SmoothCrvJointsOptions.ContinuityMode);
                 
-                var optAngleTol = new OptionDouble(SmoothCrvJointsOptions.MinKinkAngle);
-                var optMagTol = new OptionDouble(SmoothCrvJointsOptions.CurvatureMagTolPct);
+                var optMinKink = new OptionDouble(SmoothCrvJointsOptions.MinKinkAngle);
                 var optSkip = new OptionToggle(SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity, "Process", "Skip");
+                var optSkipAngle = new OptionDouble(SmoothCrvJointsOptions.SkipAngleTolDeg);
+                var optSkipCurv = new OptionDouble(SmoothCrvJointsOptions.SkipCurvTolPct);
+
                 var optLimitDev = new OptionToggle(SmoothCrvJointsOptions.LimitCrvDev, "No", "Yes");
                 var optDevTol = new OptionDouble(SmoothCrvJointsOptions.DevTol);
                 var optAction = new OptionToggle(SmoothCrvJointsOptions.DeleteInput, "No", "Yes");
                 var optEcho = new OptionToggle(SmoothCrvJointsOptions.Echo, "No", "Yes");
                 var optDebug = new OptionToggle(SmoothCrvJointsOptions.Debug, "No", "Yes");
 
-                go.AddOptionDouble("MinKinkAngle", ref optAngleTol);
-                
-                // Show Vector Magnitude tolerance only if attempting G2
-                if (SmoothCrvJointsOptions.ContinuityMode >= 1)
-                    go.AddOptionDouble("VectMagRelDiffPct", ref optMagTol);
-                    
+                go.AddOptionDouble("MinKinkAngle", ref optMinKink);
                 go.AddOptionToggle("IfAlreadyAtContinuity", ref optSkip);
-                go.AddOptionToggle("LimitCrvDev", ref optLimitDev);
                 
+                if (SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity)
+                {
+                    go.AddOptionDouble("SkipAngleTol", ref optSkipAngle);
+                    if (SmoothCrvJointsOptions.ContinuityMode >= 1)
+                    {
+                        go.AddOptionDouble("SkipCurvRelPct", ref optSkipCurv);
+                    }
+                }
+                    
+                go.AddOptionToggle("LimitCrvDev", ref optLimitDev);
                 if (SmoothCrvJointsOptions.LimitCrvDev)
+                {
                     go.AddOptionDouble("DevTol", ref optDevTol);
+                }
                 
                 go.AddOptionToggle("DeleteInput", ref optAction);
                 go.AddOptionToggle("Echo", ref optEcho);
@@ -87,14 +95,15 @@ namespace CADacombs.Commands.Modeling.Curves
                         SmoothCrvJointsOptions.ContinuityMode = opt.CurrentListOptionIndex;
                     }
                     
-                    SmoothCrvJointsOptions.MinKinkAngle = optAngleTol.CurrentValue;
+                    SmoothCrvJointsOptions.MinKinkAngle = optMinKink.CurrentValue;
                     if (SmoothCrvJointsOptions.MinKinkAngle <= 0) 
                         SmoothCrvJointsOptions.MinKinkAngle = 5.0;
 
-                    SmoothCrvJointsOptions.CurvatureMagTolPct = optMagTol.CurrentValue;
                     SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity = optSkip.CurrentValue;
+                    SmoothCrvJointsOptions.SkipAngleTolDeg = optSkipAngle.CurrentValue;
+                    SmoothCrvJointsOptions.SkipCurvTolPct = optSkipCurv.CurrentValue;
+
                     SmoothCrvJointsOptions.LimitCrvDev = optLimitDev.CurrentValue;
-                    
                     SmoothCrvJointsOptions.DevTol = optDevTol.CurrentValue;
                     if (SmoothCrvJointsOptions.DevTol < 0) 
                         SmoothCrvJointsOptions.DevTol = 0.1 * doc.ModelAbsoluteTolerance;
@@ -132,7 +141,8 @@ namespace CADacombs.Commands.Modeling.Curves
                     originalPc,
                     SmoothCrvJointsOptions.ContinuityMode,
                     SmoothCrvJointsOptions.MinKinkAngle,
-                    SmoothCrvJointsOptions.CurvatureMagTolPct,
+                    SmoothCrvJointsOptions.SkipAngleTolDeg,
+                    SmoothCrvJointsOptions.SkipCurvTolPct,
                     SmoothCrvJointsOptions.DevTol,
                     SmoothCrvJointsOptions.SkipIfAlreadyAtContinuity,
                     SmoothCrvJointsOptions.LimitCrvDev,

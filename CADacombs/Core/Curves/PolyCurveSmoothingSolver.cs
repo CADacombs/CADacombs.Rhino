@@ -7,16 +7,12 @@ namespace CADacombs.Core.Curves
 {
     public static class PolyCurveSmoothingSolver
     {
-        // 1.82501207499443e-08 radians converted to degrees. 
-        // Derived from Math.Acos(1.0 - Math.Pow(2, -52)) where 2^-52 is double-precision machine epsilon.
-        // At this angle, the dot product of two vectors evaluates mathematically to 1.0.
-        private const double PerfectG1TolDeg = 1.0456565158694086e-06;
-
         public static Curve Solve(
             PolyCurve polyCurve, 
             int continuityMode, // 0 = G1, 1 = G2WithG1Fallback, 2 = G2Only
-            double angleTolDeg, 
-            double curvatureMagTolPct, 
+            double minKinkAngle, 
+            double skipAngleTolDeg, 
+            double skipCurvTolPct, 
             double devTol, 
             bool skipIfAlreadyAtContinuity, 
             bool limitCrvDev, 
@@ -57,19 +53,23 @@ namespace CADacombs.Core.Curves
                 var vA = ContinuityUtils.GetContinuityVectorsAt(segA, segA.Domain.T1, CurveEvaluationSide.Below);
                 var vB = ContinuityUtils.GetContinuityVectorsAt(segB, segB.Domain.T0, CurveEvaluationSide.Above);
                 
-                // 1. Check against the user's upper limit to protect intentional kinks
-                int? userLevel = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, angleTolDeg, angleTolDeg, curvatureMagTolPct);
-                if (userLevel == null || userLevel.Value < 1)
+                // 1. Strictly enforce the user's upper limit to protect intentional design kinks
+                double jointAngleDeg = RhinoMath.ToDegrees(Vector3d.VectorAngle(vA.Tangent, vB.Tangent));
+                if (jointAngleDeg >= minKinkAngle)
                 {
-                    if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Intentional kink or gap exceeds user AngleTol ({angleTolDeg}°).");
+                    if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Intentional kink ({jointAngleDeg:F3}°) exceeds MinKinkAngle ({minKinkAngle}°).");
                     newSegs.Add(segA);
                     segA = segB;
                     continue;
                 }
 
-                // 2. Check against machine epsilon for true geometric perfection
-                int? perfectLevel = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, PerfectG1TolDeg, PerfectG1TolDeg, curvatureMagTolPct);
-                int currentCont = perfectLevel ?? 0;
+                // 2. Check against the lower-limit "perfection" tolerances
+                int currentCont = 0;
+                if (skipIfAlreadyAtContinuity)
+                {
+                    int? perfectLevel = ContinuityUtils.GetContinuityLevel(vB, vA, posTol, skipAngleTolDeg, skipAngleTolDeg, skipCurvTolPct);
+                    currentCont = perfectLevel ?? 0;
+                }
 
                 NurbsCurve resA = null;
                 NurbsCurve resB = null;
@@ -80,17 +80,17 @@ namespace CADacombs.Core.Curves
                     rA = null; rB = null;
                     if (modA && modB)
                     {
-                        var res = CurveMatchMath.MatchBothCurves(segA, segB, true, false, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, angleTolDeg, curvatureMagTolPct, debug);
+                        var res = CurveMatchMath.MatchBothCurves(segA, segB, true, false, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
                         rA = res.ResultA; rB = res.ResultB;
                     }
                     else if (modA && !modB)
                     {
-                        var res = CurveMatchMath.MatchOneCurve(segA, segB, true, false, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, angleTolDeg, curvatureMagTolPct, debug);
+                        var res = CurveMatchMath.MatchOneCurve(segA, segB, true, false, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
                         rA = res.Result;
                     }
                     else if (!modA && modB)
                     {
-                        var res = CurveMatchMath.MatchOneCurve(segB, segA, false, true, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, angleTolDeg, curvatureMagTolPct, debug);
+                        var res = CurveMatchMath.MatchOneCurve(segB, segA, false, true, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
                         rB = res.Result;
                     }
                     return (rA != null || rB != null);
@@ -100,7 +100,7 @@ namespace CADacombs.Core.Curves
                 {
                     if (skipIfAlreadyAtContinuity && currentCont >= 2)
                     {
-                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at perfect G2.");
+                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at G2 perfection.");
                         jointResolved = true;
                     }
                     else if (TryMatch(2, out resA, out resB))
@@ -114,7 +114,7 @@ namespace CADacombs.Core.Curves
                 {
                     if (skipIfAlreadyAtContinuity && currentCont >= 1)
                     {
-                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at perfect G1.");
+                        if (debug) RhinoApp.WriteLine($"Skipping Joint {i}: Already at G1 perfection.");
                         jointResolved = true;
                     }
                     else if (TryMatch(1, out resA, out resB))

@@ -247,11 +247,12 @@ namespace CADacombs.Core.Curves
                 return PolyCurveSmoothingSolver.Solve(
                     pc, 
                     continuityMode: 0, 
-                    angleTolDeg: angleTolDeg, 
-                    curvatureMagTolPct: 5.0, // Unused since G2 is false
+                    minKinkAngle: angleTolDeg, // Use the incoming angleTolDeg to protect intentional kinks
+                    skipAngleTolDeg: 1.2074182697257333e-06, // Hard-coded perfection limit
+                    skipCurvTolPct: 1e-8, // Hard-coded perfection limit
                     devTol: distTol, 
                     skipIfAlreadyAtContinuity: true, 
-                    limitCrvDev: true, // Respect SimplifyCrv's distTol
+                    limitCrvDev: true, 
                     debug: false
                 );
             }
