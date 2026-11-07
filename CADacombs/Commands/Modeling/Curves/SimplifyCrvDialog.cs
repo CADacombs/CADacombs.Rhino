@@ -14,7 +14,7 @@ namespace CADacombs.Commands.Modeling.Curves
         private SimplifyCrvConduit _conduit;
         
         private TextBox _txtDistTol;
-        private TextBox _txtAngleTol;
+        private TextBox _txtMinKinkAngle;
         private TextBox _txtLineDistTol;
         private TextBox _txtArcBulgeTol;
         private TextBox _txtMinSegLen;
@@ -27,11 +27,13 @@ namespace CADacombs.Commands.Modeling.Curves
         
         private CheckBox _chkSpansToLines;
         private CheckBox _chkSpansToArcs;
-        private CheckBox _chkAdjustG1;
         private CheckBox _chkSpansToBeziers;
         private CheckBox _chkMakeUniform;
-        private CheckBox _chkSplitAllKnots;
-        private CheckBox _chkSplitFullyMultiple;
+        private DropDown _dropKnotSplit;
+        
+        private CheckBox _chkSmoothJoints;
+        private DropDown _dropSmoothMode;
+        
         private CheckBox _chkPolylineOutput;
         
         private Label _lblProcessedCount;
@@ -52,11 +54,10 @@ namespace CADacombs.Commands.Modeling.Curves
         
         public bool AnyOptionChecked => _chkSpansToLines.Checked == true || 
                                         _chkSpansToArcs.Checked == true || 
-                                        _chkAdjustG1.Checked == true ||
+                                        _chkSmoothJoints.Checked == true ||
                                         _chkSpansToBeziers.Checked == true || 
                                         _chkMakeUniform.Checked == true ||
-                                        _chkSplitAllKnots.Checked == true ||
-                                        _chkSplitFullyMultiple.Checked == true ||
+                                        _dropKnotSplit.SelectedIndex > 0 ||
                                         _chkPolylineOutput.Checked == true;
         
         public bool HasChanges { get; private set; } 
@@ -68,8 +69,8 @@ namespace CADacombs.Commands.Modeling.Curves
             
             if (SimplifyCrvOptions.DistanceTolerance < 0)
                 SimplifyCrvOptions.DistanceTolerance = SimplifyCrvOptions.GetDefaultDistTol();
-            if (SimplifyCrvOptions.AngleTolerance < 0)
-                SimplifyCrvOptions.AngleTolerance = Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees;
+            if (SimplifyCrvOptions.MinKinkAngle < 0)
+                SimplifyCrvOptions.MinKinkAngle = 5.0;
             if (SimplifyCrvOptions.LineDistanceTolerance < 0)
                 SimplifyCrvOptions.LineDistanceTolerance = SimplifyCrvOptions.GetDefaultLineTol();
             if (SimplifyCrvOptions.ArcBulgeTolerance < 0)
@@ -101,7 +102,7 @@ namespace CADacombs.Commands.Modeling.Curves
         private void CreateControls()
         {
             _txtDistTol = new TextBox { Text = SimplifyCrvOptions.DistanceTolerance.ToString("G"), Width = 60, TextAlignment = TextAlignment.Left };
-            _txtAngleTol = new TextBox { Text = SimplifyCrvOptions.AngleTolerance.ToString("G"), Width = 60, TextAlignment = TextAlignment.Left };
+            _txtMinKinkAngle = new TextBox { Text = SimplifyCrvOptions.MinKinkAngle.ToString("G"), Width = 60, TextAlignment = TextAlignment.Left };
             _txtMinSegLen = new TextBox { Text = SimplifyCrvOptions.MinSegmentLength.ToString("G"), Width = 60, TextAlignment = TextAlignment.Left };
             
             _txtLineDistTol = new TextBox { Text = SimplifyCrvOptions.LineDistanceTolerance.ToString("G"), Width = 60, TextAlignment = TextAlignment.Left };
@@ -142,20 +143,31 @@ namespace CADacombs.Commands.Modeling.Curves
 
             _rblConversionState = new RadioButtonList { Orientation = Orientation.Horizontal, Spacing = new Size(15, 0) };
             _rblConversionState.Items.Add(new ListItem { Text = "Apply conversions", Key = "On" });
-            _rblConversionState.Items.Add(new ListItem { Text = "Original (Compare)", Key = "Off" });
+            _rblConversionState.Items.Add(new ListItem { Text = "Original (for comparison)", Key = "Off" });
             _rblConversionState.SelectedKey = "On";
 
             _chkSpansToLines = new CheckBox { Text = "Convert spans to lines", Checked = SimplifyCrvOptions.ConvertLines };
             _chkSpansToArcs = new CheckBox { Text = "Convert spans to arcs", Checked = SimplifyCrvOptions.ConvertArcs };
-            _chkAdjustG1 = new CheckBox { Text = "Smooth joints to tangency", Checked = SimplifyCrvOptions.AdjustG1 };
             _chkSpansToBeziers = new CheckBox { Text = "Convert NURBS sections to Beziers", Checked = SimplifyCrvOptions.ConvertBeziers };
             _chkMakeUniform = new CheckBox { Text = "Make remaining NURBS spans uniform", Checked = SimplifyCrvOptions.MakeUniform };
-            _chkSplitAllKnots = new CheckBox { Text = "Split at all multiple knots", Checked = SimplifyCrvOptions.SplitAllKnots };
-            _chkSplitFullyMultiple = new CheckBox { Text = "Split at fully multiple knots", Checked = SimplifyCrvOptions.SplitFullyMultiple };
             _chkPolylineOutput = new CheckBox { Text = "Merge contiguous lines to polylines", Checked = SimplifyCrvOptions.MergePolylines };
             
+            _dropKnotSplit = new DropDown { Width = 230 };
+            _dropKnotSplit.Items.Add("Do not split");
+            _dropKnotSplit.Items.Add("Split at geometric kinks");
+            _dropKnotSplit.Items.Add("Split at kinks and curvature breaks");
+            _dropKnotSplit.SelectedIndex = SimplifyCrvOptions.KnotSplitMode;
+            _dropKnotSplit.SelectedIndexChanged += OnOptionChanged;
+            
+            _chkSmoothJoints = new CheckBox { Text = "Smooth joints:", Checked = SimplifyCrvOptions.SmoothJoints };
+            _dropSmoothMode = new DropDown { Width = 145 };
+            _dropSmoothMode.Items.Add("G1 only");
+            _dropSmoothMode.Items.Add("G2 w/ G1 fallback");
+            _dropSmoothMode.Items.Add("G2 only");
+            _dropSmoothMode.SelectedIndex = SimplifyCrvOptions.SmoothJointsMode;
+            
             _txtDistTol.TextChanged += OnToleranceTextChanged;
-            _txtAngleTol.TextChanged += OnToleranceTextChanged;
+            _txtMinKinkAngle.TextChanged += OnToleranceTextChanged;
             _txtLineDistTol.TextChanged += OnToleranceTextChanged;
             _txtArcBulgeTol.TextChanged += OnToleranceTextChanged;
             _txtMinSegLen.TextChanged += OnToleranceTextChanged;
@@ -168,10 +180,11 @@ namespace CADacombs.Commands.Modeling.Curves
             
             _chkSpansToLines.CheckedChanged += OnOptionChanged;
             _chkSpansToArcs.CheckedChanged += OnOptionChanged;
-            _chkAdjustG1.CheckedChanged += OnOptionChanged;
             _chkMakeUniform.CheckedChanged += OnOptionChanged;
             _chkPolylineOutput.CheckedChanged += OnOptionChanged;
-            _chkSplitFullyMultiple.CheckedChanged += OnOptionChanged;
+            _dropKnotSplit.SelectedIndexChanged += OnOptionChanged;
+            _chkSmoothJoints.CheckedChanged += OnOptionChanged;
+            _dropSmoothMode.SelectedIndexChanged += OnOptionChanged;
 
             _rblConversionState.SelectedIndexChanged += (s, e) =>
             {
@@ -185,19 +198,14 @@ namespace CADacombs.Commands.Modeling.Curves
                 OnOptionChanged(s, e);
             };
 
-            _chkSplitAllKnots.CheckedChanged += (s, e) =>
-            {
-                UpdateControlEnableStates();
-                OnOptionChanged(s, e);
-            };
-
             _lblProcessedCount = new Label { Text = "Processed 0 curve(s)." };
             _lblMaxDev = new Label { Text = "Max dev: 0.0", TextColor = Colors.DimGray };
             _reportPanel = new Panel();
             
             _progressBar = new ProgressBar { MinValue = 0, MaxValue = _inputCurves.Count, Value = 0, Visible = false, Height = 10 };
 
-            _btnOk = new Button { Text = "OK", Width = 75 };
+            // Initialize OK button as disabled. It only lights up when geometric changes are confirmed.
+            _btnOk = new Button { Text = "OK", Width = 75, Enabled = false };
             _btnOk.Click += (s, e) => 
             { 
                 if (!ValidateTolerances())
@@ -209,7 +217,8 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (_previewPending)
                 {
                     bool success = UpdatePreview(false);
-                    if (!success) return; 
+                    // If a forced preview still results in no geometry changes, block the exit.
+                    if (!success || !HasChanges) return; 
                 }
                 Result = true; 
                 Close(); 
@@ -231,17 +240,17 @@ namespace CADacombs.Commands.Modeling.Curves
         {
             if (_isUpdatingTextProgrammatically) return;
             
-            // Neutral pending state while typing
             _previewPending = true;
+            _btnOk.Enabled = false; // Disable OK while the user is actively typing
+            
             _lblProcessedCount.Text = "Waiting for input...";
             _lblMaxDev.Text = "";
             _reportPanel.Content = null;
             
             _btnPreview.Enabled = false;
-            _btnPreview.TextColor = SystemColors.ControlText; // Keep neutral
+            _btnPreview.TextColor = SystemColors.ControlText; 
             _btnPreview.Font = new Font(SystemFont.Default, _btnPreview.Font.Size);
 
-            // Debounce: reset the 1-second timer on every keystroke
             _typingTimer.Stop();
             _typingTimer.Start();
         }
@@ -266,7 +275,6 @@ namespace CADacombs.Commands.Modeling.Curves
 
                     bool changed = false;
 
-                    // Clamping and Negative re-assignment
                     if (val < 0.0) 
                     {
                         val = defaultVal;
@@ -281,7 +289,7 @@ namespace CADacombs.Commands.Modeling.Curves
                     if (changed)
                     {
                         tb.Text = val.ToString("G"); 
-                        tb.CaretIndex = 0; // Force scroll to the left so significant digits are visible
+                        tb.CaretIndex = 0; 
                     }
                     
                     tb.BackgroundColor = Colors.White;
@@ -289,7 +297,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
 
                 ProcessBox(_txtDistTol, SimplifyCrvOptions.GetDefaultDistTol());
-                ProcessBox(_txtAngleTol, Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees);
+                ProcessBox(_txtMinKinkAngle, Rhino.RhinoDoc.ActiveDoc.ModelAngleToleranceDegrees);
                 ProcessBox(_txtLineDistTol, SimplifyCrvOptions.GetDefaultLineTol());
                 ProcessBox(_txtArcBulgeTol, SimplifyCrvOptions.GetDefaultArcBulgeTol());
                 ProcessBox(_txtMinSegLen, SimplifyCrvOptions.GetDefaultMinSegLength());
@@ -310,7 +318,7 @@ namespace CADacombs.Commands.Modeling.Curves
         private bool ValidateTolerances()
         {
             return double.TryParse(_txtDistTol.Text, out _) &&
-                   double.TryParse(_txtAngleTol.Text, out _) &&
+                   double.TryParse(_txtMinKinkAngle.Text, out _) &&
                    double.TryParse(_txtLineDistTol.Text, out _) &&
                    double.TryParse(_txtArcBulgeTol.Text, out _) &&
                    double.TryParse(_txtMinSegLen.Text, out _);
@@ -322,15 +330,18 @@ namespace CADacombs.Commands.Modeling.Curves
             
             _chkSpansToLines.Enabled = globalEnabled;
             _chkSpansToArcs.Enabled = globalEnabled;
-            _chkAdjustG1.Enabled = globalEnabled;
             _chkSpansToBeziers.Enabled = globalEnabled;
             _chkMakeUniform.Enabled = globalEnabled;
-            _chkSplitAllKnots.Enabled = globalEnabled;
-            _chkSplitFullyMultiple.Enabled = globalEnabled && !(_chkSplitAllKnots.Checked ?? false);
+            _dropKnotSplit.Enabled = globalEnabled;
+            _chkSmoothJoints.Enabled = globalEnabled;
             _chkPolylineOutput.Enabled = globalEnabled;
             
             _txtLineDistTol.Enabled = globalEnabled && (_chkSpansToLines.Checked ?? false);
             _txtArcBulgeTol.Enabled = globalEnabled && (_chkSpansToArcs.Checked ?? false);
+            
+            bool smoothEnabled = globalEnabled && (_chkSmoothJoints.Checked ?? false);
+            _dropSmoothMode.Enabled = smoothEnabled;
+            _txtMinKinkAngle.Enabled = smoothEnabled;
             
             bool bezEnabled = globalEnabled && (_chkSpansToBeziers.Checked ?? false);
             if (_chkDegrees != null)
@@ -346,13 +357,13 @@ namespace CADacombs.Commands.Modeling.Curves
             var tolGrid = new TableLayout { Spacing = new Size(8, 6) };
             tolGrid.Rows.Add(new TableRow(
                 new Label { Text = "Max crv dev:", VerticalAlignment = VerticalAlignment.Center }, _txtDistTol, Gap(),
-                new Label { Text = "Max angle dev (°):", VerticalAlignment = VerticalAlignment.Center }, _txtAngleTol, Gap(),
-                null // The null cell soaks up extra width, keeping the text boxes naturally sized
+                new Label { Text = "Min seg len:", VerticalAlignment = VerticalAlignment.Center }, _txtMinSegLen, Gap(),
+                null 
             ));
             
             tolGrid.Rows.Add(new TableRow(
-                new Label { Text = "Min seg len:", VerticalAlignment = VerticalAlignment.Center }, _txtMinSegLen, Gap(),
                 new Label { Text = "Preview thk:", VerticalAlignment = VerticalAlignment.Center }, _stepPreviewThickness, Gap(),
+                new Label { Text = "" }, new Label { Text = "" }, Gap(),
                 null 
             ));
 
@@ -360,8 +371,23 @@ namespace CADacombs.Commands.Modeling.Curves
             degStack.Items.Add(new Label { Text = "NURBS degs: ", VerticalAlignment = VerticalAlignment.Center });
             foreach (var c in _chkDegrees) degStack.Items.Add(c);
 
-            var lineStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, VerticalContentAlignment = VerticalAlignment.Center, Items = { _chkSpansToLines, new Label { Text = "Line dist tol:" }, _txtLineDistTol } };
+            var lineStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, VerticalContentAlignment = VerticalAlignment.Center, Items = { _chkSpansToLines, new Label { Text = "Dev tol:" }, _txtLineDistTol } };
             var arcStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, VerticalContentAlignment = VerticalAlignment.Center, Items = { _chkSpansToArcs, new Label { Text = "Min arc bulge:" }, _txtArcBulgeTol } };
+            var splitStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, VerticalContentAlignment = VerticalAlignment.Center, Items = { new Label { Text = "Knot splitting:" }, _dropKnotSplit } };
+
+            var smoothStack = new StackLayout {
+                Orientation = Orientation.Horizontal,
+                Spacing = 10,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Items = { _chkSmoothJoints, _dropSmoothMode }
+            };
+
+            var kinkTolStack = new StackLayout {
+                Orientation = Orientation.Horizontal,
+                Spacing = 10,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Items = { new Panel { Width = 20 }, new Label { Text = "Min kink angle (°):" }, _txtMinKinkAngle } 
+            };
 
             var optionsStack = new StackLayout
             {
@@ -371,11 +397,11 @@ namespace CADacombs.Commands.Modeling.Curves
                     new Panel { Height = 4 }, 
                     lineStack, 
                     arcStack, 
-                    _chkAdjustG1,
                     _chkSpansToBeziers, 
                     _chkMakeUniform,
-                    _chkSplitAllKnots, 
-                    _chkSplitFullyMultiple, 
+                    splitStack, 
+                    smoothStack,
+                    kinkTolStack,
                     _chkPolylineOutput 
                 }
             };
@@ -434,14 +460,13 @@ namespace CADacombs.Commands.Modeling.Curves
             if (double.TryParse(_txtLineDistTol.Text, out double lTol)) SimplifyCrvOptions.LineDistanceTolerance = lTol;
             if (double.TryParse(_txtMinSegLen.Text, out double sTol)) SimplifyCrvOptions.MinSegmentLength = sTol;
             if (double.TryParse(_txtArcBulgeTol.Text, out double abTol)) SimplifyCrvOptions.ArcBulgeTolerance = abTol;
-            if (double.TryParse(_txtAngleTol.Text, out double aTol)) SimplifyCrvOptions.AngleTolerance = aTol;
+            if (double.TryParse(_txtMinKinkAngle.Text, out double aTol)) SimplifyCrvOptions.MinKinkAngle = aTol;
             
             SimplifyCrvOptions.PreviewThickness = (int)_stepPreviewThickness.Value;
             SimplifyCrvOptions.AutoPreviewTimeout = (int)_stepPreviewTimeout.Value;
 
             SimplifyCrvOptions.ConvertLines = _chkSpansToLines.Checked ?? false;
             SimplifyCrvOptions.ConvertArcs = _chkSpansToArcs.Checked ?? false;
-            SimplifyCrvOptions.AdjustG1 = _chkAdjustG1.Checked ?? false;
             SimplifyCrvOptions.ConvertBeziers = _chkSpansToBeziers.Checked ?? false;
             SimplifyCrvOptions.MakeUniform = _chkMakeUniform.Checked ?? false;
             
@@ -451,8 +476,11 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (_chkDegrees[i].Checked == true) SimplifyCrvOptions.TargetDegrees.Add(i + 1);
             }
             
-            SimplifyCrvOptions.SplitAllKnots = _chkSplitAllKnots.Checked ?? false;
-            SimplifyCrvOptions.SplitFullyMultiple = _chkSplitFullyMultiple.Checked ?? false;
+            SimplifyCrvOptions.KnotSplitMode = _dropKnotSplit.SelectedIndex;
+            
+            SimplifyCrvOptions.SmoothJoints = _chkSmoothJoints.Checked ?? false;
+            SimplifyCrvOptions.SmoothJointsMode = _dropSmoothMode.SelectedIndex;
+            
             SimplifyCrvOptions.MergePolylines = _chkPolylineOutput.Checked ?? false;
             
             base.OnClosed(e); 
@@ -461,13 +489,13 @@ namespace CADacombs.Commands.Modeling.Curves
         private void OnOptionChanged(object sender, EventArgs e)
         {
             UpdateControlEnableStates();
-            UpdatePreview(true); // Attempt auto-preview
+            UpdatePreview(true);
         }
 
-        // Dedicated state for when manual intervention is actually required (like a timeout)
         private void SetPreviewRequired(string message)
         {
             _previewPending = true;
+            _btnOk.Enabled = false; // Block OK if we timed out or have a known bad state
             
             _btnPreview.Enabled = true;
             _btnPreview.TextColor = Colors.Red;
@@ -505,6 +533,10 @@ namespace CADacombs.Commands.Modeling.Curves
 
             if (!AnyOptionChecked || disableConversions)
             {
+                // Explicitly wipe the HasChanges flag so the command doesn't touch the doc
+                HasChanges = false;
+                _btnOk.Enabled = false;
+                
                 foreach (var c in _inputCurves) ResultCurves.Add(c.DuplicateCurve());
                 ClearPreviewPending(_inputCurves.Count, 0.0);
                 
@@ -525,13 +557,16 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 double distTol = double.Parse(_txtDistTol.Text);
                 double lineTol = double.Parse(_txtLineDistTol.Text);
-                double angleTolRad = Rhino.RhinoMath.ToRadians(double.Parse(_txtAngleTol.Text));
+                double minKinkAngleDeg = double.Parse(_txtMinKinkAngle.Text);
                 double arcBulgeTol = double.Parse(_txtArcBulgeTol.Text);
                 double minSegLen = double.Parse(_txtMinSegLen.Text);
                 
                 List<int> targets = new List<int>();
                 for (int i = 0; i < 9; i++) if (_chkDegrees[i].Checked == true) targets.Add(i + 1);
                 
+                int knotSplitMode = _dropKnotSplit.SelectedIndex;
+                int smoothMode = _dropSmoothMode.SelectedIndex;
+
                 int curvesProcessed = 0;
                 foreach (var inputCurve in _inputCurves)
                 {
@@ -551,15 +586,15 @@ namespace CADacombs.Commands.Modeling.Curves
                     }
 
                     var result = SimplifyCrvLogic.ExecutePipeline(
-                        inputCurve, distTol, angleTolRad, lineTol, arcBulgeTol, minSegLen,
+                        inputCurve, distTol, minKinkAngleDeg, lineTol, arcBulgeTol, minSegLen,
                         _chkSpansToLines.Checked ?? false, 
                         _chkSpansToArcs.Checked ?? false,
-                        _chkAdjustG1.Checked ?? false,
+                        _chkSmoothJoints.Checked ?? false,
+                        smoothMode,
                         _chkSpansToBeziers.Checked ?? false,
                         targets,
                         _chkMakeUniform.Checked ?? false,
-                        _chkSplitAllKnots.Checked ?? false, 
-                        _chkSplitFullyMultiple.Checked ?? false, 
+                        knotSplitMode, 
                         _chkPolylineOutput.Checked ?? false
                         );
 
@@ -575,13 +610,18 @@ namespace CADacombs.Commands.Modeling.Curves
                 {
                     var inStats = CurveStats.Analyze(_inputCurves);
                     var outStats = CurveStats.Analyze(ResultCurves);
-                    HasChanges = inStats.HasDifferences(outStats);
+                    
+                    // Evaluate and strictly enforce the OK button's state
+                    HasChanges = inStats.HasDifferences(outStats) || MaxDeviation > Rhino.RhinoMath.ZeroTolerance;
+                    _btnOk.Enabled = HasChanges;
 
                     ClearPreviewPending(curvesProcessed, MaxDeviation);
                     BuildReportTable(inStats, outStats);
                 }
                 else
                 {
+                    HasChanges = false;
+                    _btnOk.Enabled = false;
                     ResultCurves.Clear(); 
                 }
             }

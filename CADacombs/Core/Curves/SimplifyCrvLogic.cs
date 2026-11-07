@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Rhino;
 using Rhino.Geometry;
 using CADacombs.Core.Curves;
 
@@ -10,18 +11,18 @@ namespace CADacombs.Core.Curves
         public static (Curve ResultCurve, int OriginalSegments, int NewSegments, double MaxDev) ExecutePipeline(
             Curve inputCurve, 
             double distTol, 
-            double angleTol,
+            double minKinkAngleDeg, 
             double lineTol,
             double arcBulgeTol,
             double minSegLen,
             bool doSpansToLines, 
             bool doSpansToArcs, 
-            bool doAdjustG1,
+            bool doSmoothJoints,
+            int smoothJointsMode,
             bool doSpansToBeziers,     
             List<int> targetDegrees,   
             bool doMakeUniform,
-            bool doSplitAllKnots,
-            bool doSplitFullyMultiple,
+            int knotSplitMode,
             bool doPolylineOutput)
         {
             if (inputCurve == null) return (null, 0, 0, 0.0);
@@ -29,18 +30,21 @@ namespace CADacombs.Core.Curves
             int originalSegs = (inputCurve is PolyCurve pcOriginal) ? pcOriginal.SegmentCount : 1;
             Curve currentCurve = inputCurve.DuplicateCurve();
             double globalMaxDev = 0.0;
+            double docTol = 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
 
-            double g1DistTol = distTol;
-            double g1AngleTol = angleTol;
-            double bezierDistTol = distTol;
-            double uniformDistTol = distTol;
-
-            if (doAdjustG1 && (doSpansToBeziers || doMakeUniform))
+            void ApplyStepIfValid(Func<Curve, Curve> stepAction)
             {
-                g1DistTol = distTol / 2.0;
-                g1AngleTol = angleTol / 2.0;
-                bezierDistTol = distTol / 2.0;
-                uniformDistTol = distTol / 2.0;
+                Curve proposedCurve = stepAction(currentCurve);
+                if (proposedCurve == null || proposedCurve == currentCurve) return;
+
+                if (Curve.GetDistancesBetweenCurves(inputCurve, proposedCurve, docTol, out double stepDev, out _, out _, out _, out _, out _))
+                {
+                    if (stepDev <= distTol)
+                    {
+                        currentCurve = proposedCurve;
+                        globalMaxDev = Math.Max(globalMaxDev, stepDev);
+                    }
+                }
             }
 
             (Curve Curve, double Dev) ProcessSpans(Curve curve, SpanConversionUtils.CurveEvaluator evaluator, Func<Curve, bool> skipCheck, bool tolByRatio, double tolRatio, double devTol, double minLen, double bulgeTol, bool onlySplitAtFullyMultipleKnots)
@@ -128,9 +132,7 @@ namespace CADacombs.Core.Curves
                     var evalRes = ConvertToLineLogic.GetLineCurve(c, lineTol, lineTol, 0.0); 
                     return (evalRes.lineCurve, evalRes.deviation, evalRes.log); 
                 };
-                var spanRes = ProcessSpans(currentCurve, lineEval, c => c is LineCurve || c is PolylineCurve, ConvertToLineOptions.TolByRatio, ConvertToLineOptions.TolRatio, lineTol, minSegLen, 0.0, false);
-                currentCurve = spanRes.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
+                ApplyStepIfValid(c => ProcessSpans(c, lineEval, cv => cv is LineCurve || cv is PolylineCurve, ConvertToLineOptions.TolByRatio, ConvertToLineOptions.TolRatio, lineTol, minSegLen, 0.0, false).Curve);
             }
 
             // 2. CONVERT SPANS TO ARCS
@@ -140,52 +142,59 @@ namespace CADacombs.Core.Curves
                     var evalRes = ConvertToArcLogic.GetArcCurve(c, distTol, distTol, 0.0, true); 
                     return (evalRes.arcCurve, evalRes.deviation, evalRes.log); 
                 };
-                var spanRes = ProcessSpans(currentCurve, arcEval, c => c is LineCurve || c is PolylineCurve || c is ArcCurve, ConvertToArcOptions.TolByRatio, ConvertToArcOptions.TolRatio, distTol, minSegLen, arcBulgeTol, false); 
-                currentCurve = spanRes.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
+                ApplyStepIfValid(c => ProcessSpans(c, arcEval, cv => cv is LineCurve || cv is PolylineCurve || cv is ArcCurve, ConvertToArcOptions.TolByRatio, ConvertToArcOptions.TolRatio, distTol, minSegLen, arcBulgeTol, false).Curve);
             }
 
-            // 3. ADJUST G1
-            if (doAdjustG1) currentCurve = ApplyAdjustG1(currentCurve, g1DistTol, g1AngleTol);
-
-            // 4. CONVERT SECTIONS TO BEZIERS
+            // 3. CONVERT SECTIONS TO BEZIERS
             if (doSpansToBeziers && targetDegrees != null && targetDegrees.Count > 0)
             {
                 SpanConversionUtils.CurveEvaluator bezierEval = c => {
-                    var evalRes = ConvertToBezierLogic.TryConvert(c, targetDegrees, true, bezierDistTol, true, false, false, false, false, false);
+                    var evalRes = ConvertToBezierLogic.TryConvert(c, targetDegrees, true, distTol, true, false, false, false, false, false);
                     return (evalRes.Bezier, evalRes.Deviation, evalRes.Log);
                 };
-                var spanRes = ProcessSpans(currentCurve, bezierEval, c => c is LineCurve || c is PolylineCurve || c is ArcCurve, false, 0.0, bezierDistTol, minSegLen, 0.0, true); 
-                currentCurve = spanRes.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
+                ApplyStepIfValid(c => ProcessSpans(c, bezierEval, cv => cv is LineCurve || cv is PolylineCurve || cv is ArcCurve, false, 0.0, distTol, minSegLen, 0.0, true).Curve);
             }
 
-            // 5. MAKE UNIFORM
+            // 4. MAKE UNIFORM
             if (doMakeUniform)
             {
                 SpanConversionUtils.CurveEvaluator uniformEval = c => {
-                    var evalRes = MakeUniformLogic.TryMakeUniform(c, true, uniformDistTol, true, false);
+                    var evalRes = MakeUniformLogic.TryMakeUniform(c, true, distTol, true, false);
                     return (evalRes.UniformCurve, evalRes.Deviation, evalRes.Log);
                 };
-                var spanRes = ProcessSpans(currentCurve, uniformEval, c => c is LineCurve || c is PolylineCurve || c is ArcCurve || (c is NurbsCurve n && n.SpanCount == 1), false, 0.0, uniformDistTol, minSegLen, 0.0, true); 
-                currentCurve = spanRes.Curve;
-                globalMaxDev = Math.Max(globalMaxDev, spanRes.Dev);
+                ApplyStepIfValid(c => ProcessSpans(c, uniformEval, cv => cv is LineCurve || cv is PolylineCurve || cv is ArcCurve || (cv is NurbsCurve n && n.SpanCount == 1), false, 0.0, distTol, minSegLen, 0.0, true).Curve);
+            }
+            
+            // 5. SPLIT KNOTS 
+            if (knotSplitMode > 0) 
+            {
+                currentCurve = SplitKnots(currentCurve, knotSplitMode, distTol, minKinkAngleDeg);
             }
 
-            // 6. SPLIT KNOTS 
-            if (doSplitAllKnots || doSplitFullyMultiple) currentCurve = SplitKnots(currentCurve, doSplitAllKnots, doSplitFullyMultiple);
+            // 6. SMOOTH JOINTS
+            if (doSmoothJoints) 
+            {
+                ApplyStepIfValid(c => ApplyAdjustContinuity(c, distTol, minKinkAngleDeg, smoothJointsMode));
+            }
 
             // 7. POLYLINE OUTPUT
-            if (doPolylineOutput) currentCurve = PolylineOutputLogic.Execute(currentCurve, true); 
+            if (doPolylineOutput) 
+            {
+                currentCurve = PolylineOutputLogic.Execute(currentCurve, true); 
+            }
 
             int newSegs = (currentCurve is PolyCurve pcNew) ? pcNew.SegmentCount : 1;
             if (currentCurve is PolylineCurve) newSegs = 1; 
 
+            if (Curve.GetDistancesBetweenCurves(inputCurve, currentCurve, docTol, out double finalDev, out _, out _, out _, out _, out _))
+                globalMaxDev = finalDev;
+
             return (currentCurve, originalSegs, newSegs, globalMaxDev);
         }
 
-        private static Curve SplitKnots(Curve curve, bool all, bool fullyMultiple)
+        private static Curve SplitKnots(Curve curve, int splitMode, double distTol, double minKinkAngleDeg)
         {
+            if (splitMode == 0) return curve;
             if (curve is LineCurve || curve is ArcCurve || curve is PolylineCurve) return curve;
             if (curve is NurbsCurve bnc && bnc.SpanCount == 1 && !bnc.IsRational) return curve;
 
@@ -196,7 +205,7 @@ namespace CADacombs.Core.Curves
                 for (int i = 0; i < pc.SegmentCount; i++)
                 {
                     Curve seg = pc.SegmentCurve(i);
-                    Curve splitSeg = SplitKnots(seg, all, fullyMultiple);
+                    Curve splitSeg = SplitKnots(seg, splitMode, distTol, minKinkAngleDeg);
                     if (splitSeg != seg) modified = true;
                     
                     if (splitSeg is PolyCurve subPc)
@@ -212,11 +221,30 @@ namespace CADacombs.Core.Curves
             if (nc == null) return curve;
 
             HashSet<double> splitParams = new HashSet<double>();
-            for (int i = 1; i < nc.Knots.Count - 1; i++)
+            double[] spans = nc.SpanVector();
+            
+            if (spans != null && spans.Length > 2)
             {
-                int mult = nc.Knots.KnotMultiplicity(i);
-                if (all && mult > 1) splitParams.Add(nc.Knots[i]);
-                else if (fullyMultiple && mult >= nc.Degree) splitParams.Add(nc.Knots[i]);
+                double strictPosTol = 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance; 
+                double strictAngleTol = 1.2074182697257333e-06; 
+                double strictCurvTol = 1e-8;
+
+                for (int i = 1; i < spans.Length - 1; i++)
+                {
+                    double t = spans[i];
+                    
+                    bool isGInf = ContinuityUtils.IsGInfinity(nc, t, CurveEvaluationSide.Above, nc, t, CurveEvaluationSide.Below, minKinkAngleDeg);
+                    if (isGInf) continue;
+
+                    var vB = ContinuityUtils.GetContinuityVectorsAt(nc, t, CurveEvaluationSide.Below);
+                    var vA = ContinuityUtils.GetContinuityVectorsAt(nc, t, CurveEvaluationSide.Above);
+                    
+                    int? gLevel = ContinuityUtils.GetContinuityLevel(vB, vA, strictPosTol, strictAngleTol, strictAngleTol, strictCurvTol);
+                    int currentLevel = gLevel ?? 0; 
+
+                    if (splitMode == 1 && currentLevel < 1) splitParams.Add(t);      
+                    else if (splitMode == 2 && currentLevel < 2) splitParams.Add(t); 
+                }
             }
 
             if (splitParams.Count == 0) return curve;
@@ -237,19 +265,16 @@ namespace CADacombs.Core.Curves
             return resultPc;
         }
 
-        private static Curve ApplyAdjustG1(Curve curve, double distTol, double angleTolDeg)
+        private static Curve ApplyAdjustContinuity(Curve curve, double distTol, double minKinkAngleDeg, int mode)
         {
             if (curve is PolyCurve pc)
             {
-                // Route through our new custom solver. 
-                // We pass false for smoothG2 and limitCrvDev since SimplifyCrv's 
-                // current UI only requests G1 and handles deviation natively.
                 return PolyCurveSmoothingSolver.Solve(
                     pc, 
-                    continuityMode: 0, 
-                    minKinkAngle: angleTolDeg, // Use the incoming angleTolDeg to protect intentional kinks
-                    skipAngleTolDeg: 1.2074182697257333e-06, // Hard-coded perfection limit
-                    skipCurvTolPct: 1e-8, // Hard-coded perfection limit
+                    continuityMode: mode, 
+                    minKinkAngle: minKinkAngleDeg, 
+                    skipAngleTolDeg: 1.2074182697257333e-06, 
+                    skipCurvTolPct: 1e-8, 
                     devTol: distTol, 
                     skipIfAlreadyAtContinuity: true, 
                     limitCrvDev: true, 
@@ -258,7 +283,6 @@ namespace CADacombs.Core.Curves
             }
             else
             {
-                // If it's a single span, there are no internal joints to smooth
                 return curve;
             }
         }
