@@ -4,7 +4,7 @@ using Rhino.DocObjects;
 using Rhino.Geometry;
 using CADacombs.Core;
 
-namespace CADacombs.Commands.Modeling
+namespace CADacombs.Commands.Modeling.Curves
 {
     public class EndBulgeCurveDialog : EndBulgeDialog
     {

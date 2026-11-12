@@ -1,0 +1,176 @@
+using System;
+using Rhino;
+using Rhino.Commands;
+using Rhino.DocObjects;
+using Rhino.Geometry;
+using Rhino.Input;
+using Rhino.Input.Custom;
+using CADacombs.Core;
+
+namespace CADacombs.Commands.Modeling.Surfaces
+{
+    public class EndBulgeSrfCommand : Command
+    {
+        public EndBulgeSrfCommand()
+        {
+            Instance = this;
+        }
+
+        public static EndBulgeSrfCommand Instance { get; private set; }
+
+        public override string EnglishName => "ccEndBulgeSrf";
+
+        protected override Result RunCommand(RhinoDoc doc, RunMode mode)
+        {
+            EndBulgeOptions.Load(this.Settings);
+
+            bool isInteractive = (mode == RunMode.Interactive);
+            EndBulgeOptions.Dialog = isInteractive;
+
+            var go = new GetObject();
+            go.DisablePreSelect();
+            go.AcceptNumber(true, true);
+            go.SetCommandPrompt("Select surface edge to adjust");
+            go.GeometryFilter = ObjectType.Curve | ObjectType.EdgeFilter;
+            go.GeometryAttributeFilter = GeometryAttributeFilter.SurfaceBoundaryEdge | GeometryAttributeFilter.SeamEdge;
+
+            go.SetCustomGeometryFilter((rhObject, geom, compIdx) =>
+            {
+                if (geom is BrepTrim rgT)
+                {
+                    Brep rgB = rgT.Brep;
+                    if (rgB.Faces.Count == 1 && rgB.Faces[0].IsSurface) return true;
+                }
+                return false;
+            });
+
+            var optDialog = new OptionToggle(EndBulgeOptions.Dialog, "No", "Yes");
+            var optLinked = new OptionToggle(EndBulgeOptions.LinkedEnds, "Independent", "Linked");
+            var optDelete = new OptionToggle(EndBulgeOptions.DeleteInput, "No", "Yes");
+            var optEcho = new OptionToggle(EndBulgeOptions.Echo, "No", "Yes");
+
+            var optScaleP = new OptionDouble(EndBulgeOptions.ScalePicked);
+            var optSlide2P = new OptionDouble(EndBulgeOptions.SlideG2Picked);
+            var optSlide3P = new OptionDouble(EndBulgeOptions.SlideG3Picked);
+            var optScaleO = new OptionDouble(EndBulgeOptions.ScaleOpp);
+            var optSlide2O = new OptionDouble(EndBulgeOptions.SlideG2Opp);
+            var optSlide3O = new OptionDouble(EndBulgeOptions.SlideG3Opp);
+
+            string[] contList = { "None", "G0", "G1", "G2", "G3" };
+            ObjRef objref_In = null;
+
+            while (true)
+            {
+                go.ClearCommandOptions();
+                
+                optScaleP.CurrentValue = EndBulgeOptions.ScalePicked;
+                optSlide2P.CurrentValue = EndBulgeOptions.SlideG2Picked;
+                optSlide3P.CurrentValue = EndBulgeOptions.SlideG3Picked;
+                optScaleO.CurrentValue = EndBulgeOptions.ScaleOpp;
+                optSlide2O.CurrentValue = EndBulgeOptions.SlideG2Opp;
+                optSlide3O.CurrentValue = EndBulgeOptions.SlideG3Opp;
+
+                int idxDialog = 0, idxLinked = 0, idxContP = 0, idxContO = 0;
+                int idxScaleP = 0, idxSlide2P = 0, idxSlide3P = 0, idxScaleO = 0, idxSlide2O = 0, idxSlide3O = 0;
+                int idxDelete = 0, idxEcho = 0;
+
+                if (!isInteractive)
+                {
+                    idxDialog = go.AddOptionToggle("Dialog", ref optDialog);
+                }
+
+                if (!EndBulgeOptions.Dialog)
+                {
+                    idxLinked = go.AddOptionToggle("AdjustEdges", ref optLinked);
+                    idxContP = go.AddOptionList("PickedEdge", contList, EndBulgeOptions.ContinuityPicked);
+                    
+                    if (!EndBulgeOptions.LinkedEnds)
+                    {
+                        idxContO = go.AddOptionList("OppEdge", contList, EndBulgeOptions.ContinuityOpp);
+                    }
+                    
+                    if (EndBulgeOptions.LinkedEnds)
+                    {
+                        idxScaleP = go.AddOptionDouble("Scale", ref optScaleP);
+                        idxSlide2P = go.AddOptionDouble("G2Slide", ref optSlide2P);
+                        idxSlide3P = go.AddOptionDouble("G3Slide", ref optSlide3P);
+                    }
+                    else
+                    {
+                        idxScaleP = go.AddOptionDouble("ScalePicked", ref optScaleP);
+                        idxSlide2P = go.AddOptionDouble("G2SlidePicked", ref optSlide2P);
+                        idxSlide3P = go.AddOptionDouble("G3SlidePicked", ref optSlide3P);
+                        
+                        idxScaleO = go.AddOptionDouble("ScaleOpp", ref optScaleO);
+                        idxSlide2O = go.AddOptionDouble("G2SlideOpp", ref optSlide2O);
+                        idxSlide3O = go.AddOptionDouble("G3SlideOpp", ref optSlide3O);
+                    }
+
+                    idxDelete = go.AddOptionToggle("DeleteInput", ref optDelete);
+                    idxEcho = go.AddOptionToggle("Echo", ref optEcho);
+                }
+                
+                var res = go.Get();
+                
+                if (res == GetResult.Cancel) return Result.Cancel;
+                if (res == GetResult.Object)
+                {
+                    objref_In = go.Object(0);
+                    break;
+                }
+                if (res == GetResult.Number)
+                {
+                    EndBulgeOptions.ScalePicked = go.Number();
+                    if (EndBulgeOptions.LinkedEnds) EndBulgeOptions.ScaleOpp = EndBulgeOptions.ScalePicked;
+                    continue;
+                }
+                if (res == GetResult.Option)
+                {
+                    var opt = go.Option();
+                    if (opt.Index == idxDialog) EndBulgeOptions.Dialog = optDialog.CurrentValue;
+                    else if (opt.Index == idxDelete) EndBulgeOptions.DeleteInput = optDelete.CurrentValue;
+                    else if (opt.Index == idxEcho) EndBulgeOptions.Echo = optEcho.CurrentValue;
+                    else if (opt.Index == idxLinked) 
+                    {
+                        EndBulgeOptions.LinkedEnds = optLinked.CurrentValue;
+                        if (EndBulgeOptions.LinkedEnds)
+                        {
+                            EndBulgeOptions.ContinuityOpp = EndBulgeOptions.ContinuityPicked;
+                            EndBulgeOptions.ScaleOpp = EndBulgeOptions.ScalePicked;
+                            EndBulgeOptions.SlideG2Opp = EndBulgeOptions.SlideG2Picked;
+                            EndBulgeOptions.SlideG3Opp = EndBulgeOptions.SlideG3Picked;
+                        }
+                    }
+                    else if (opt.Index == idxContP) 
+                    {
+                        EndBulgeOptions.ContinuityPicked = opt.CurrentListOptionIndex;
+                        if (EndBulgeOptions.LinkedEnds) EndBulgeOptions.ContinuityOpp = EndBulgeOptions.ContinuityPicked;
+                    }
+                    else if (opt.Index == idxContO) EndBulgeOptions.ContinuityOpp = opt.CurrentListOptionIndex;
+                    else if (opt.Index == idxScaleP) 
+                    {
+                        EndBulgeOptions.ScalePicked = optScaleP.CurrentValue;
+                        if (EndBulgeOptions.LinkedEnds) EndBulgeOptions.ScaleOpp = EndBulgeOptions.ScalePicked;
+                    }
+                    else if (opt.Index == idxSlide2P) 
+                    {
+                        EndBulgeOptions.SlideG2Picked = optSlide2P.CurrentValue;
+                        if (EndBulgeOptions.LinkedEnds) EndBulgeOptions.SlideG2Opp = EndBulgeOptions.SlideG2Picked;
+                    }
+                    else if (opt.Index == idxSlide3P) 
+                    {
+                        EndBulgeOptions.SlideG3Picked = optSlide3P.CurrentValue;
+                        if (EndBulgeOptions.LinkedEnds) EndBulgeOptions.SlideG3Opp = EndBulgeOptions.SlideG3Picked;
+                    }
+                    else if (opt.Index == idxScaleO) EndBulgeOptions.ScaleOpp = optScaleO.CurrentValue;
+                    else if (opt.Index == idxSlide2O) EndBulgeOptions.SlideG2Opp = optSlide2O.CurrentValue;
+                    else if (opt.Index == idxSlide3O) EndBulgeOptions.SlideG3Opp = optSlide3O.CurrentValue;
+                }
+            }
+
+            EndBulgeOptions.Save();
+
+            return EndBulgeSurfaceLogic.ExecuteWithRef(doc, isInteractive, objref_In);
+        }
+    }
+}

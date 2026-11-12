@@ -4,7 +4,7 @@ using Rhino.Geometry;
 
 namespace CADacombs.Core.Curves
 {
-    public static class MakeUniformLogic
+    public static class ConvertToUniformCurveLogic
     {
         public static (NurbsCurve UniformCurve, double Deviation, string Log) TryMakeUniform(
             Curve crvIn, 

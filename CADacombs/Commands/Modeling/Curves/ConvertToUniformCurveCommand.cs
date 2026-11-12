@@ -9,12 +9,12 @@ using CADacombs.Core.Curves;
 
 namespace CADacombs.Commands.Modeling.Curves
 {
-    public class MakeUniformCommand : Command
+    public class ConvertToUniformCurveCommand : Command
     {
-        public MakeUniformCommand() { Instance = this; }
-        public static MakeUniformCommand Instance { get; private set; }
+        public ConvertToUniformCurveCommand() { Instance = this; }
+        public static ConvertToUniformCurveCommand Instance { get; private set; }
         
-        public override string EnglishName => "ccMakeUniformCrv";
+        public override string EnglishName => "ccConvertCrvToUniform";
 
         // Sticky Options
         private bool _limitDev = true;
@@ -139,7 +139,12 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
 
                 // 2. Core Solver
-                var result = MakeUniformLogic.TryMakeUniform(crv, _limitDev, _devTol, _preserveEndTangents, _preserveEndCurvatures);
+                var result = ConvertToUniformCurveLogic.TryMakeUniform(
+                    crv,
+                    _limitDev,
+                    _devTol,
+                    _preserveEndTangents,
+                    _preserveEndCurvatures);
 
                 if (_debug && !string.IsNullOrEmpty(result.Log))
                 {

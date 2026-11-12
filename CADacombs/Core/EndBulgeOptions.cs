@@ -1,4 +1,5 @@
 using System;
+using Rhino;
 
 namespace CADacombs.Core
 {
@@ -8,6 +9,9 @@ namespace CADacombs.Core
     /// </summary>
     public static class EndBulgeOptions
     {
+        // Holds a global reference to the active command's settings registry
+        public static Rhino.PersistentSettings PluginSettings { get; set; }
+
         // ----------------------------------------------------
         // Global / Application States
         // ----------------------------------------------------
@@ -49,5 +53,49 @@ namespace CADacombs.Core
         public static double ScaleOpp { get; set; } = 1.0;
         public static double SlideG2Opp { get; set; } = 0.0;
         public static double SlideG3Opp { get; set; } = 0.0;
+
+        // ----------------------------------------------------
+        // Persistent Registry Methods
+        // ----------------------------------------------------
+        public static void Load(Rhino.PersistentSettings settings)
+        {
+            if (settings == null) return;
+            PluginSettings = settings;
+
+            LinkedEnds = settings.GetBool("EndBulge_LinkedEnds", LinkedEnds);
+            Increment = settings.GetDouble("EndBulge_Increment", Increment);
+            SliderStepsIndex = settings.GetInteger("EndBulge_SliderStepsIndex", SliderStepsIndex);
+            DeleteInput = settings.GetBool("EndBulge_DeleteInput", DeleteInput);
+            
+            ShowPolygon = settings.GetBool("EndBulge_ShowPolygon", ShowPolygon);
+            ShowGraph = settings.GetBool("EndBulge_ShowGraph", ShowGraph);
+            GraphScale = settings.GetInteger("EndBulge_GraphScale", GraphScale);
+            GraphDensity = settings.GetInteger("EndBulge_GraphDensity", GraphDensity);
+            
+            ContinuityPicked = settings.GetInteger("EndBulge_ContinuityPicked", ContinuityPicked);
+            ContinuityOpp = settings.GetInteger("EndBulge_ContinuityOpp", ContinuityOpp);
+            
+            UseNativePreview = settings.GetBool("EndBulge_UseNativePreview", UseNativePreview);
+        }
+
+        public static void Save()
+        {
+            if (PluginSettings == null) return;
+            
+            PluginSettings.SetBool("EndBulge_LinkedEnds", LinkedEnds);
+            PluginSettings.SetDouble("EndBulge_Increment", Increment);
+            PluginSettings.SetInteger("EndBulge_SliderStepsIndex", SliderStepsIndex);
+            PluginSettings.SetBool("EndBulge_DeleteInput", DeleteInput);
+            
+            PluginSettings.SetBool("EndBulge_ShowPolygon", ShowPolygon);
+            PluginSettings.SetBool("EndBulge_ShowGraph", ShowGraph);
+            PluginSettings.SetInteger("EndBulge_GraphScale", GraphScale);
+            PluginSettings.SetInteger("EndBulge_GraphDensity", GraphDensity);
+            
+            PluginSettings.SetInteger("EndBulge_ContinuityPicked", ContinuityPicked);
+            PluginSettings.SetInteger("EndBulge_ContinuityOpp", ContinuityOpp);
+            
+            PluginSettings.SetBool("EndBulge_UseNativePreview", UseNativePreview);
+        }
     }
 }

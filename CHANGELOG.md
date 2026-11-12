@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor.
 
+## [0.2.11] - 2026-11-12
+
+### Added
+- `ccMatchCrv`: Introduced a comprehensive curve-matching tool with an interactive Eto dialog, real-time deviation reporting, and full CLI support.
+- **Math Engine:** Added a 2D Shared-CV Optimization solver to `ccMatchCrv`. It calculates exact line-line intersections for tangent and curvature offset constraints, generating pristine, low-degree Bezier curves (Degrees 2, 3, and 4) for planar G1/G2 matches instead of defaulting to Degree 5.
+- **Math Engine:** Added internal continuity preservation to `ccMatchCrv`. The engine scans internal knots before and after deformation, rejecting candidate curves if they degrade existing internal continuity (configurable up through G2 or G3).
+- **Math Engine:** Added inflection point monitoring to `ccMatchCrv` to optionally prevent the introduction of new topological waves during deformation.
+- **Math Engine:** Added a multi-candidate deviation shootout to `ccMatchCrv` that dynamically ranks structural solutions (Point Moves, Tangent Slides, SetEndCondition) by lowest degree first, followed by lowest average deviation.
+- `ccCrvDiscontinuities`: Added a two-step interactive preview and finalize workflow utilizing a custom display conduit to visualize discontinuities with color-coded text dots before executing actions (`AddPts`, `AddDots`, `SplitCrv`).
+- `ccCrvDiscontinuities`: Added dynamic console reporting that breaks down the specific sub-tier continuities of the discovered discontinuities (e.g., "Found 6 G3 discontinuities: 4 G0, 2 G2").
+- `ccCrvDiscontinuities`: Added angular deviation readouts (in degrees) directly to the preview text dots when evaluating G1 (tangency) failures.
+- `ccInflectionPts`: Added a new analysis command to automatically evaluate curves and process points of geometric inflection (where curvature changes sign). Includes options to mark these parameters with Point objects or physically split the curves at the inflections.
+- `ccRadiusMinima`: Added a new analysis command to numerically calculate and mark the exact points of minimum radius (maximum curvature) along a curve's domain.
+- `ccRadiusMinima`: Added granular numeric filtering to the CLI (`MinRadToReport` and `MaxRadToReport`) to easily isolate specific pinch points.
+- `ccRadiusMinima`: Added flexible output marking options, allowing users to bake Point objects or size-adjustable Text Dots at all minima, the minimum per curve, or the global minimum across the entire selection.
+- `ccSmoothPolycrvJoints`: Added a new CLI command dedicated to evaluating and healing internal PolyCurve joints to G1 or G2 continuity, featuring dynamic G2-to-G1 fallback routing.
+- `ccSmoothPolycrvJoints`: Added strict mathematical bypassing logic (`SkipAngleTolDeg` and `SkipCurvTolPct`) to ignore joints that are already geometrically perfect, preventing unnecessary parameterization changes.
+- `ccSmoothPolycrvJoints`: Added console reporting to display pre- and post-operation topology changes, including inflection point counts, minimum radius shifts, and maximum deviation.
+- `ccSimplifyCrv`: Integrated PolyCurve joint smoothing directly into the UI dialog with a consolidated "Smooth joints" checkbox, nested G-mode dropdown, and tied "Min kink angle" value.
+- `ccSimplifyCrv`: Added "Ground-Truth Verification" to the dialog; the `OK` button now dynamically disables itself if the solver pipeline fails to produce any mathematical deviations from the input geometry.
+- `ccSimplifyCrv`: Implemented a strict fail-safe in the smoothing solver that permanently discards smoothing candidates if they violate the user's deviation tolerance, protecting the curve from useless knot injections.
+- `ccSimplifyCrv`: Added strict object-type checking to `PolylineOutputLogic` to prevent smoothed, linear-looking NURBS segments from being accidentally merged into rigid Polylines.
+- `ccEndBulgeCrv` & `ccEndBulgeSrf`: Split the legacy `ccEndBulge` command into two dedicated, type-safe commands. The new commands strictly filter selections to curves and surface edges respectively, preventing accidental geometric mis-clicks.
+- `ccEndBulgeCrv` & `ccEndBulgeSrf`: Integrated `Rhino.PersistentSettings` across the options architecture. The dialogs now natively save and recall user preferences (Linked mode, Continuity limits, UI layouts) directly to the user's registry across Rhino reboots without relying on custom JSON files.
+
+### Changed
+- `ccCrvDiscontinuities`: Consolidated angular tolerance options into a single `VectAngleDiffTol` and renamed the magnitude option to `VectMagRelDiffPct` for improved CLI clarity.
+- `ccCrvDiscontinuities`: Reconfigured the 'G' (Continuity order) option to a list format to resolve native Rhino numeric parsing conflicts, while safely preserving the ability to type the order directly at the main command prompt.
+- `ccEndBulge`: The legacy unified command has been flagged with the `[CommandStyle(Style.Hidden)]` attribute. It remains fully functional as a background router to avoid breaking existing user macros or scripts, but is removed from standard autocomplete visibility.
+
+### Fixed
+- `ccSimplifyCrv`: Fixed a topological blind spot where closed NURBS curves with G0 seams were ignored by the Knot Splitter. The splitter now mathematically slices G0 seams at the mid-domain to expose the kink to the joint smoother.
+- `ccSimplifyCrv`: Fixed a tolerance misalignment where legacy sub-routines (Line/Arc/Bezier conversions) were erroneously halving the user's deviation tolerance. All pipeline solvers now uniformly respect the explicit `Max crv dev` value.
+
 ## [0.2.10] - 2026-10-19
 
 ### Added
@@ -87,7 +121,7 @@ Note: Legacy spb_ prefixes were standardized to cc_ during the C# suite refactor
 - `ccRemoveCrvKnots`: Implemented smart knot removal using domain normalization ($D(A) = D(R) \cdot \frac{L(A)}{L(R)}$) across fully multiple joints to equalize derivative speeds, paired with a multi-strategy brute-force removal solver.
 - `ccConvertCrvToBezier`: Added single-span Bezier conversion using adaptive cubic bulge-fitting for degree 3 targets and rebuild fallbacks for arbitrary target degrees.
 - `ccGCon`, `ccCrvContinuities`, `ccCrvDiscontinuities`: Added unified geometric continuity analysis tools with $G^\infty$ detection for Degree 2 curves.
-- `ccConvertCrvToArc`, `ccConvertCrvToLine`, `ccMakeUniformCrv`, `ccSimplifyCrv`: Added curve conversion, uniformization, and greedy span simplification tools.
+- `ccConvertCrvToArc`, `ccConvertCrvToLine`, `ccConvertCrvToUniform`, `ccSimplifyCrv`: Added curve conversion, uniformization, and greedy span simplification tools.
 - `ccSelUniformNurbsCrv`: Added a dedicated selection tool to isolate mathematically uniform NURBS curves in the document.
 - `ccSimplifyCrv`: Added a dedicated UI dialog with real-time preview updating, maximum deviation reporting, and granular threshold settings (Max crv dev, Max angle dev, Min seg len, Min arc bulge).
 - **UI / Toolbars:** Refactored `CADacombs.rui` into separate `CADacombs Curves` and `CADacombs Surfaces` toolbars arranged in Creation $\rightarrow$ Modification $\rightarrow$ Analysis order, with button labels abbreviated to 8 characters or fewer.

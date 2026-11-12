@@ -8,7 +8,7 @@ using Rhino.Display;
 using Rhino.Geometry;
 using CADacombs.Core;
 
-namespace CADacombs.Commands.Modeling
+namespace CADacombs.Commands.Modeling.Surfaces
 {
     public class EndBulgeSurfaceConduit : EndBulgeConduit
     {

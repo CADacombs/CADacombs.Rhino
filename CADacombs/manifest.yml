@@ -8,12 +8,23 @@ url: https://github.com/CADacombs/CADacombs.Rhino
 icon: icon.png
 keywords:
 - guid:274aafc3-84b3-47a6-86af-dac682ff0c84
+- drape
 - edgesrf
-- matchsrf
 - endbulge
+- gcon
+- makeuniform
+- match
+- matchsrf
+- project
+- pull
+- simplifycrv
+- arc
+- bezier
+- line
 - nurbs
 - curve
 - surface
+- knots
 description: |
   A growing collection of tools. See the included README or visit Food4Rhino for full command details and documentation.
 

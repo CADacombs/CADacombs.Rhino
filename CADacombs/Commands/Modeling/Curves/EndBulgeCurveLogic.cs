@@ -9,7 +9,7 @@ using Rhino.Input.Custom;
 using Rhino.UI;
 using CADacombs.Core;
 
-namespace CADacombs.Commands.Modeling
+namespace CADacombs.Commands.Modeling.Curves
 {
     public static class EndBulgeCurveLogic
     {

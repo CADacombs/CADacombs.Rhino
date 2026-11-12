@@ -159,7 +159,7 @@ namespace CADacombs.Core.Curves
             if (doMakeUniform)
             {
                 SpanConversionUtils.CurveEvaluator uniformEval = c => {
-                    var evalRes = MakeUniformLogic.TryMakeUniform(c, true, distTol, true, false);
+                    var evalRes = ConvertToUniformCurveLogic.TryMakeUniform(c, true, distTol, true, false);
                     return (evalRes.UniformCurve, evalRes.Deviation, evalRes.Log);
                 };
                 ApplyStepIfValid(c => ProcessSpans(c, uniformEval, cv => cv is LineCurve || cv is PolylineCurve || cv is ArcCurve || (cv is NurbsCurve n && n.SpanCount == 1), false, 0.0, distTol, minSegLen, 0.0, true).Curve);

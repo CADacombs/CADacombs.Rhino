@@ -7,7 +7,7 @@ using Rhino.Geometry;
 using Eto.Forms;
 using CADacombs.Core;
 
-namespace CADacombs.Commands.Modeling
+namespace CADacombs.Commands.Modeling.Surfaces
 {
     public class EndBulgeSurfaceDialog : EndBulgeDialog
     {

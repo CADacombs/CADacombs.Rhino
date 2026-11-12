@@ -7,9 +7,12 @@ using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.Input.Custom;
 using CADacombs.Core;
+using CADacombs.Commands.Modeling.Curves;
+using CADacombs.Commands.Modeling.Surfaces;
 
 namespace CADacombs.Commands.Modeling
 {
+    [CommandStyle(Style.Hidden)]
     public class EndBulgeCommand : Command
     {
         public EndBulgeCommand()
@@ -25,6 +28,8 @@ namespace CADacombs.Commands.Modeling
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
+            EndBulgeOptions.Load(this.Settings);
+
             bool isInteractive = (mode == RunMode.Interactive);
             EndBulgeOptions.Dialog = isInteractive;
 
@@ -112,7 +117,6 @@ namespace CADacombs.Commands.Modeling
                     go.GeometryAttributeFilter = GeometryAttributeFilter.SurfaceBoundaryEdge | GeometryAttributeFilter.SeamEdge;
                 }
 
-                // Determine terminology dynamically based on the toggle state
                 string termEnd = _edgeForCrvNotSrf ? "End" : "Edge";
 
                 int idxEdgeTog = go.AddOptionToggle("Edge", ref optEdgeForCrv);
@@ -127,17 +131,14 @@ namespace CADacombs.Commands.Modeling
 
                 if (!EndBulgeOptions.Dialog)
                 {
-                    // 1. MASTER MODE TOGGLE
                     idxLinked = go.AddOptionToggle("Adjust" + termEnd + "s", ref optLinked);
 
-                    // 2. CONTINUITIES
                     idxContP = go.AddOptionList("Picked" + termEnd, contList, EndBulgeOptions.ContinuityPicked);
                     if (!EndBulgeOptions.LinkedEnds)
                     {
                         idxContO = go.AddOptionList("Opp" + termEnd, contList, EndBulgeOptions.ContinuityOpp);
                     }
                     
-                    // 3. SLIDERS
                     if (EndBulgeOptions.LinkedEnds)
                     {
                         idxScaleP = go.AddOptionDouble("Scale", ref optScaleP);
@@ -155,7 +156,6 @@ namespace CADacombs.Commands.Modeling
                         idxSlide3O = go.AddOptionDouble("G3SlideOpp", ref optSlide3O);
                     }
 
-                    // 4. DISPLAY / SETTINGS
                     idxDelete = go.AddOptionToggle("DeleteInput", ref optDelete);
                     idxEcho = go.AddOptionToggle("Echo", ref optEcho);
                 }
@@ -182,7 +182,6 @@ namespace CADacombs.Commands.Modeling
                     else if (opt.Index == idxDelete) EndBulgeOptions.DeleteInput = optDelete.CurrentValue;
                     else if (opt.Index == idxEcho) EndBulgeOptions.Echo = optEcho.CurrentValue;
                     
-                    // INSTANT CLI SYNC LOGIC
                     else if (opt.Index == idxLinked) 
                     {
                         EndBulgeOptions.LinkedEnds = optLinked.CurrentValue;
@@ -223,9 +222,7 @@ namespace CADacombs.Commands.Modeling
                 }
             }
 
-            #if DEBUG
-            RhinoApp.WriteLine($"[DEBUG ROUTING] objref_In.Trim() is null? {objref_In.Trim() == null}");
-            #endif
+            EndBulgeOptions.Save();
 
             if (objref_In.Trim() != null && !_edgeForCrvNotSrf)
             {

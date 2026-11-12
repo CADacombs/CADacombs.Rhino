@@ -621,6 +621,9 @@ namespace CADacombs.Core
             EndBulgeOptions.DeleteInput = checkBoxes["bDeleteInput"].Checked ?? true;
             EndBulgeOptions.Echo = checkBoxes["bEcho"].Checked ?? true;
             EndBulgeOptions.Debug = false;
+
+            // Commit the specified variables to the user's hard drive 
+            EndBulgeOptions.Save();
         }
 
         protected void OnOKButtonClick(object sender, EventArgs e)

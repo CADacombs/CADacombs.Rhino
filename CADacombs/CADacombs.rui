@@ -3,14 +3,14 @@
   <tool_bar_groups>
     <!-- Single Master CADacombs Group containing both toolbars -->
     <tool_bar_group guid="274aafc3-84b3-47a6-86af-dac682ff0c84" dock_bar_guid64="274aafc3-84b3-47a6-86af-dac682ff0c84" active_tool_bar_group="99999999-8888-7777-6666-555555555555" single_file="False" hide_single_tab="False" point_floating="288,325">
-      <text><locale_1033>CADacombs</locale_1033></text>
+      <text><locale_1033>CADacombs (cc)</locale_1033></text>
       <!-- Curves Tab First -->
       <tool_bar_group_item guid="99999999-8888-7777-6666-555555555555" major_version="1" minor_version="1">
-        <text><locale_1033>CADacombs Curves</locale_1033></text>
+        <text><locale_1033>Curves (cc)</locale_1033></text>
         <tool_bar_id>11111111-2222-3333-4444-555555555555</tool_bar_id>
       </tool_bar_group_item>
       <tool_bar_group_item guid="274aafc3-84b3-47a6-86af-dac682ff0c84" major_version="1" minor_version="1">
-        <text><locale_1033>CADacombs Surfaces</locale_1033></text>
+        <text><locale_1033>Surfaces (cc)</locale_1033></text>
         <tool_bar_id>274aafc3-84b3-47a6-86af-dac682ff0c84</tool_bar_id>
       </tool_bar_group_item>
       <dock_bar_info dpi_scale="150" dock_bar="False" docking="False" horz="False" visible="True" floating="True" mru_float_style="0" bar_id="0" mru_width="0" dock_location_u="0" dock_location="left" />
@@ -20,8 +20,8 @@
   <tool_bars>
     <!-- 1. SURFACES TOOLBAR -->
     <tool_bar guid="274aafc3-84b3-47a6-86af-dac682ff0c84" bitmap_id="274aafc3-84b3-47a6-86af-dac682ff0c84">
-      <text><locale_1033>CADacombs Surfaces</locale_1033></text>
-      <!-- Creation -->
+      <text><locale_1033>Surfaces (cc)</locale_1033></text>
+      <!-- Sequenced per request -->
       <tool_bar_item guid="a1b2c3d4-0000-0000-0000-000000000001">
         <text><locale_1033>EdgeSrf</locale_1033></text>
         <left_macro_id>a1b2c3d4-0000-0000-0000-000000000002</left_macro_id>
@@ -35,16 +35,14 @@
         <left_macro_id>d0000001-0000-0000-0000-000000000021</left_macro_id>
         <right_macro_id>d0000001-0000-0000-0000-000000000023</right_macro_id>
       </tool_bar_item>
-      <!-- Modification -->
       <tool_bar_item guid="42b6a0fe-f3b5-4a50-8e1f-e137babbe79e">
         <text><locale_1033>MatchSrf</locale_1033></text>
         <left_macro_id>80d96364-4fdc-4485-98fc-e5e374b03321</left_macro_id>
       </tool_bar_item>
-      <tool_bar_item guid="2f15babb-70f3-4ff0-a57e-bb47a54057b3">
-        <text><locale_1033>EndBulge</locale_1033></text>
-        <left_macro_id>2f15babb-70f3-4ff0-a57e-bb47a54057b3</left_macro_id>
+      <tool_bar_item guid="2f15babb-70f3-4ff0-a57e-bb47a54057b5">
+        <text><locale_1033>EndBulgeSrf</locale_1033></text>
+        <left_macro_id>2f15babb-70f3-4ff0-a57e-bb47a54057b6</left_macro_id>
       </tool_bar_item>
-      <!-- Utility -->
       <tool_bar_item guid="f0c5d253-d2fc-4e29-9b4b-1d4bb72c8a64">
         <text><locale_1033>About</locale_1033></text>
         <left_macro_id>ff533a46-e2ab-4403-8840-610837ad1d37</left_macro_id>
@@ -53,7 +51,7 @@
 
     <!-- 2. CURVES TOOLBAR -->
     <tool_bar guid="11111111-2222-3333-4444-555555555555" bitmap_id="11111111-2222-3333-4444-555555555555">
-      <text><locale_1033>CADacombs Curves</locale_1033></text>
+      <text><locale_1033>Curves (cc)</locale_1033></text>
       <!-- Sequenced per request -->
       <tool_bar_item guid="c0000001-0000-0000-0000-000000000006">
         <text><locale_1033>ToLine</locale_1033></text>
@@ -67,21 +65,29 @@
         <text><locale_1033>ToBezier</locale_1033></text>
         <left_macro_id>e0000001-0000-0000-0000-000000000005</left_macro_id>
       </tool_bar_item>
-      <tool_bar_item guid="c0000001-0000-0000-0000-000000000011">
-        <text><locale_1033>MakeUniform</locale_1033></text>
+      <tool_bar_item guid="c0000001-0000-0000-0000-000000000013">
+        <text><locale_1033>ToUniform</locale_1033></text>
         <left_macro_id>e0000001-0000-0000-0000-000000000011</left_macro_id>
       </tool_bar_item>
       <tool_bar_item guid="c0000001-0000-0000-0000-000000000007">
         <text><locale_1033>RemoveKnots</locale_1033></text>
         <left_macro_id>e0000001-0000-0000-0000-000000000007</left_macro_id>
       </tool_bar_item>
+      <tool_bar_item guid="c0000001-0000-0000-0000-000000000014">
+        <text><locale_1033>MatchCrv</locale_1033></text>
+        <left_macro_id>e0000001-0000-0000-0000-000000000014</left_macro_id>
+      </tool_bar_item>
+      <tool_bar_item guid="c0000001-0000-0000-0000-000000000015">
+        <text><locale_1033>SmoothJoints</locale_1033></text>
+        <left_macro_id>e0000001-0000-0000-0000-000000000015</left_macro_id>
+      </tool_bar_item>
       <tool_bar_item guid="c0000001-0000-0000-0000-000000000008">
         <text><locale_1033>Simplify</locale_1033></text>
         <left_macro_id>e0000001-0000-0000-0000-000000000008</left_macro_id>
       </tool_bar_item>
       <tool_bar_item guid="c0000001-0000-0000-0000-000000000009">
-        <text><locale_1033>EndBulge</locale_1033></text>
-        <left_macro_id>2f15babb-70f3-4ff0-a57e-bb47a54057b3</left_macro_id>
+        <text><locale_1033>EndBulgeCrv</locale_1033></text>
+        <left_macro_id>2f15babb-70f3-4ff0-a57e-bb47a54057b4</left_macro_id>
       </tool_bar_item>
       <tool_bar_item guid="c0000001-0000-0000-0000-000000000012">
         <text><locale_1033>SelUniform</locale_1033></text>
@@ -94,20 +100,21 @@
       <tool_bar_item guid="c0000001-0000-0000-0000-000000000002">
         <text><locale_1033>CrvCont'ties</locale_1033></text>
         <left_macro_id>e0000001-0000-0000-0000-000000000002</left_macro_id>
+        <right_macro_id>e0000001-0000-0000-0000-000000000003</right_macro_id>
       </tool_bar_item>
-      <tool_bar_item guid="c0000001-0000-0000-0000-000000000003">
-        <text><locale_1033>CrvDisc'ties</locale_1033></text>
-        <left_macro_id>e0000001-0000-0000-0000-000000000003</left_macro_id>
+      <tool_bar_item guid="c0000001-0000-0000-0000-000000000016">
+        <text><locale_1033>InflectionPts</locale_1033></text>
+        <left_macro_id>e0000001-0000-0000-0000-000000000016</left_macro_id>
       </tool_bar_item>
-      <tool_bar_item guid="c0000001-0000-0000-0000-000000000010">
-        <text><locale_1033>About</locale_1033></text>
-        <left_macro_id>ff533a46-e2ab-4403-8840-610837ad1d37</left_macro_id>
+      <tool_bar_item guid="c0000001-0000-0000-0000-000000000017">
+        <text><locale_1033>RadiusMinima</locale_1033></text>
+        <left_macro_id>e0000001-0000-0000-0000-000000000017</left_macro_id>
       </tool_bar_item>
     </tool_bar>
   </tool_bars>
   
   <macros>
-    <!-- Surface & General Macros -->
+    <!-- Surface Macros -->
     <macro_item guid="a1b2c3d4-0000-0000-0000-000000000002" bitmap_id="a1b2c3d4-0000-0000-0000-000000000003">
       <text><locale_1033>Macro.ccEdgeSrf</locale_1033></text>
       <tooltip><locale_1033>ccEdgeSrf</locale_1033></tooltip>
@@ -148,6 +155,7 @@
       <script>! _ccMatchSrf</script>
     </macro_item>
 
+    <!-- Legacy generic EndBulge macro left for backwards script compatibility -->
     <macro_item guid="2f15babb-70f3-4ff0-a57e-bb47a54057b3" bitmap_id="2f15babb-70f3-4ff0-a57e-bb47a54057b3">
       <text><locale_1033>Macro.ccEndBulge</locale_1033></text>
       <tooltip><locale_1033>ccEndBulge</locale_1033></tooltip>
@@ -156,6 +164,22 @@
       <script>! _ccEndBulge</script>
     </macro_item>
     
+    <macro_item guid="2f15babb-70f3-4ff0-a57e-bb47a54057b4" bitmap_id="2f15babb-70f3-4ff0-a57e-bb47a54057b3">
+      <text><locale_1033>Macro.ccEndBulgeCrv</locale_1033></text>
+      <tooltip><locale_1033>ccEndBulgeCrv</locale_1033></tooltip>
+      <button_text><locale_1033>EndBulgeCrv</locale_1033></button_text>
+      <menu_text><locale_1033>ccEndBulgeCrv</locale_1033></menu_text>
+      <script>! _ccEndBulgeCrv</script>
+    </macro_item>
+    
+    <macro_item guid="2f15babb-70f3-4ff0-a57e-bb47a54057b6" bitmap_id="2f15babb-70f3-4ff0-a57e-bb47a54057b3">
+      <text><locale_1033>Macro.ccEndBulgeSrf</locale_1033></text>
+      <tooltip><locale_1033>ccEndBulgeSrf</locale_1033></tooltip>
+      <button_text><locale_1033>EndBulgeSrf</locale_1033></button_text>
+      <menu_text><locale_1033>ccEndBulgeSrf</locale_1033></menu_text>
+      <script>! _ccEndBulgeSrf</script>
+    </macro_item>
+
     <macro_item guid="ff533a46-e2ab-4403-8840-610837ad1d37" bitmap_id="ff533a46-e2ab-4403-8840-610837ad1d37">
       <text><locale_1033>Macro.ccAboutCADacombs</locale_1033></text>
       <tooltip><locale_1033>ccAboutCADacombs</locale_1033></tooltip>
@@ -230,11 +254,11 @@
     </macro_item>
     
     <macro_item guid="e0000001-0000-0000-0000-000000000011" bitmap_id="d0000001-0000-0000-0000-000000000011">
-      <text><locale_1033>Macro.ccMakeUniformCrv</locale_1033></text>
-      <tooltip><locale_1033>ccMakeUniformCrv</locale_1033></tooltip>
-      <button_text><locale_1033>MakeUniform</locale_1033></button_text>
-      <menu_text><locale_1033>ccMakeUniformCrv</locale_1033></menu_text>
-      <script>! _ccMakeUniformCrv</script>
+      <text><locale_1033>Macro.ccConvertCrvToUniform</locale_1033></text>
+      <tooltip><locale_1033>ccConvertCrvToUniform</locale_1033></tooltip>
+      <button_text><locale_1033>ToUniform</locale_1033></button_text>
+      <menu_text><locale_1033>ccConvertCrvToUniform</locale_1033></menu_text>
+      <script>! _ccConvertCrvToUniform</script>
     </macro_item>
 
     <macro_item guid="e0000001-0000-0000-0000-000000000012" bitmap_id="d0000001-0000-0000-0000-000000000012">
@@ -244,10 +268,42 @@
       <menu_text><locale_1033>ccSelUniformNurbsCrv</locale_1033></menu_text>
       <script>! _ccSelUniformNurbsCrv</script>
     </macro_item>
+
+    <!-- New Additional Curve Analysis/Modification Macros -->
+    <macro_item guid="e0000001-0000-0000-0000-000000000014" bitmap_id="d0000001-0000-0000-0000-000000000014">
+      <text><locale_1033>Macro.ccMatchCrv</locale_1033></text>
+      <tooltip><locale_1033>ccMatchCrv</locale_1033></tooltip>
+      <button_text><locale_1033>MatchCrv</locale_1033></button_text>
+      <menu_text><locale_1033>ccMatchCrv</locale_1033></menu_text>
+      <script>! _ccMatchCrv</script>
+    </macro_item>
+
+    <macro_item guid="e0000001-0000-0000-0000-000000000015" bitmap_id="d0000001-0000-0000-0000-000000000015">
+      <text><locale_1033>Macro.ccSmoothPolycrvJoints</locale_1033></text>
+      <tooltip><locale_1033>ccSmoothPolycrvJoints</locale_1033></tooltip>
+      <button_text><locale_1033>SmoothJoints</locale_1033></button_text>
+      <menu_text><locale_1033>ccSmoothPolycrvJoints</locale_1033></menu_text>
+      <script>! _ccSmoothPolycrvJoints</script>
+    </macro_item>
+
+    <macro_item guid="e0000001-0000-0000-0000-000000000016" bitmap_id="d0000001-0000-0000-0000-000000000016">
+      <text><locale_1033>Macro.ccInflectionPts</locale_1033></text>
+      <tooltip><locale_1033>ccInflectionPts</locale_1033></tooltip>
+      <button_text><locale_1033>Inflections</locale_1033></button_text>
+      <menu_text><locale_1033>ccInflectionPts</locale_1033></menu_text>
+      <script>! _ccInflectionPts</script>
+    </macro_item>
+
+    <macro_item guid="e0000001-0000-0000-0000-000000000017" bitmap_id="d0000001-0000-0000-0000-000000000017">
+      <text><locale_1033>Macro.ccRadiusMinima</locale_1033></text>
+      <tooltip><locale_1033>ccRadiusMinima</locale_1033></tooltip>
+      <button_text><locale_1033>RadiusMinima</locale_1033></button_text>
+      <menu_text><locale_1033>ccRadiusMinima</locale_1033></menu_text>
+      <script>! _ccRadiusMinima</script>
+    </macro_item>
   </macros>
   
   <icons>
-    <!-- 1. CADacombs Surfaces Toolbar Icon (4-Patch Blue Surface) -->
     <icon guid="274aafc3-84b3-47a6-86af-dac682ff0c84" name="ccSurfacesToolbar.svg">
       <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -275,7 +331,6 @@
       </svg></light>
     </icon>
 
-    <!-- 2. CADacombs Curves Toolbar Icon (3 S-Curves) -->
     <icon guid="11111111-2222-3333-4444-555555555555" name="ccCurvesToolbar.svg">
       <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
         <path d="M 4,10 C 16,-6 32,26 44,10" fill="none" fill-dark="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
@@ -284,7 +339,6 @@
       </svg></light>
     </icon>
 
-    <!-- 3. ccEdgeSrf Icon (Clean 4-boundary wireframe surface) -->
     <icon guid="a1b2c3d4-0000-0000-0000-000000000003" name="ccEdgeSrf.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
         <defs>
@@ -293,10 +347,8 @@
             <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
           </linearGradient>
         </defs>
-        <!-- Blue Fill -->
         <path d="M 4,4 C 20,12 28,12 44,4 C 36,20 36,28 44,44 C 28,36 20,36 4,44 C 12,28 12,20 4,4 Z" fill="#c8d5ff" fill-dark="#304ab6" stroke="none" />
         <path d="M 4,4 C 20,12 28,12 44,4 C 36,20 36,28 44,44 C 28,36 20,36 4,44 C 12,28 12,20 4,4 Z" fill="url(#surfHighlight)" stroke="none"/>
-        <!-- 4 Outer Curves -->
         <path d="M 4,4 C 20,12 28,12 44,4" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
         <path d="M 4,44 C 20,36 28,36 44,44" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
         <path d="M 4,4 C 12,20 12,28 4,44" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
@@ -304,7 +356,6 @@
       </svg></light>
     </icon>
 
-    <!-- 4. ccDrape Icon (Target object, Raycasts, Drape surface) -->
     <icon guid="d1a1b2c3-1234-4321-a1b2-c3d4e5f6a7ba" name="ccDrape.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
         <defs>
@@ -313,19 +364,15 @@
             <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
           </linearGradient>
         </defs>
-        <!-- Target Object -->
         <path d="M 12,44 L 12,24 L 24,24 L 24,32 L 36,32 L 36,44 Z" fill="#DDDDDD" fill-dark="#555555" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
-        <!-- Drape Surface -->
         <path d="M 4,40 C 8,40 10,20 16,20 C 22,20 22,28 28,28 C 34,28 38,40 44,40 C 44,44 4,44 4,40 Z" fill="#c8d5ff" fill-dark="#304ab6" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
         <path d="M 4,40 C 8,40 10,20 16,20 C 22,20 22,28 28,28 C 34,28 38,40 44,40 C 44,44 4,44 4,40 Z" fill="url(#surfHighlight)" stroke="none"/>
-        <!-- Raycasts (Dashed lines + arrows) -->
         <line x1="4" y1="8" x2="44" y2="8" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="2" stroke-dasharray="4,2"/>
         <path d="M 16,8 L 16,16 M 14,14 L 16,18 L 18,14" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-linejoin="round"/>
         <path d="M 28,8 L 28,24 M 26,22 L 28,26 L 30,22" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-linejoin="round"/>
       </svg></light>
     </icon>
 
-    <!-- NEW: ccProjectSrf Icon -->
     <icon guid="d0000001-0000-0000-0000-000000000020" name="ccProjectSrf.svg">
       <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -334,29 +381,21 @@
             <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
           </linearGradient>
         </defs>
-        <!-- Target Object (Stepped Gray Body) -->
         <path d="M 12,44 L 12,24 L 24,24 L 24,32 L 36,32 L 36,44 Z" fill="#DDDDDD" fill-dark="#555555" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
-        <!-- Starting Top Surface -->
         <path d="M 6,14 C 16,4 32,4 42,14 L 42,18 C 32,8 16,8 6,18 Z" fill="#c8d5ff" fill-dark="#304ab6" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
         <path d="M 6,14 C 16,4 32,4 42,14 L 42,18 C 32,8 16,8 6,18 Z" fill="url(#surfHighlight)" stroke="none"/>
-        <!-- Control Polygon (Dashed) -->
         <polyline points="6,14 16,4 32,4 42,14" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-dasharray="3,3"/>
-        <!-- Raycasts dropping from Control Points (Dashed lines) -->
         <path d="M 16,6 L 16,22 M 32,6 L 32,30" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-dasharray="3,3"/>
-        <!-- Raycast Arrows (Solid) -->
         <path d="M 14,18 L 16,22 L 18,18 M 30,26 L 32,30 L 34,26" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-linejoin="round"/>
-        <!-- Top Control Points -->
         <rect x="4" y="12" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
         <rect x="14" y="2" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
         <rect x="30" y="2" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
         <rect x="40" y="12" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
-        <!-- Projected Control Points resting on the Target -->
         <rect x="14" y="22" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
         <rect x="30" y="30" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
       </svg></light>
     </icon>
 
-    <!-- 5. ccMatchSrf Icon (2 Surfaces, tangent lines) -->
     <icon guid="d2c12ed9-9585-4f85-9662-fb0ff32d9bbb" name="d2c12ed9-9585-4f85-9662-fb0ff32d9bbb.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
         <defs>
@@ -365,31 +404,23 @@
             <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
           </linearGradient>
         </defs>
-        <!-- Left Surface -->
         <path d="M 22,6 L 4,14 L 4,36 L 22,28 Z" fill="#c8d5ff" fill-dark="#304ab6" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
         <path d="M 22,6 L 4,14 L 4,36 L 22,28 Z" fill="url(#surfHighlight)" stroke="none"/>
-        <!-- Right Surface -->
         <path d="M 22,6 C 32,6 44,4 44,4 L 44,26 C 44,26 32,28 22,28 Z" fill="#c8d5ff" fill-dark="#304ab6" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
         <path d="M 22,6 C 32,6 44,4 44,4 L 44,26 C 44,26 32,28 22,28 Z" fill="url(#surfHighlight)" stroke="none"/>
-        <!-- Control Lines -->
         <polyline points="22,6 32,16 44,4" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-dasharray="2,2" stroke-linejoin="round"/>
         <rect x="30" y="14" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
       </svg></light>
     </icon>
 
-    <!-- 6. ccEndBulge Icon (Smooth NURBS curve with control polygon) -->
     <icon guid="2f15babb-70f3-4ff0-a57e-bb47a54057b3" name="2f15babb-70f3-4ff0-a57e-bb47a54057b3.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-        <!-- Curve -->
         <path d="M 4,40 C 14,4 34,4 44,40" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
-        <!-- Polygon -->
         <polyline points="4,40 4,14 16,4 32,4 44,14 44,40" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="1.5" stroke-dasharray="3,3" stroke-linejoin="round"/>
-        <!-- Tangents -->
         <line x1="4" y1="40" x2="4" y2="14" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5"/>
         <line x1="44" y1="40" x2="44" y2="14" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5"/>
         <line x1="4" y1="14" x2="16" y2="4" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5"/>
         <line x1="44" y1="14" x2="32" y2="4" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="1.5"/>
-        <!-- Points -->
         <rect x="2" y="38" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
         <rect x="42" y="38" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
         <rect x="2" y="12" width="4" height="4" fill="#000000" fill-dark="#FFFFFF"/>
@@ -399,7 +430,6 @@
       </svg></light>
     </icon>
 
-    <!-- 7. ccAboutCADacombs Icon -->
     <icon guid="ff533a46-e2ab-4403-8840-610837ad1d37" name="ff533a46-e2ab-4403-8840-610837ad1d37.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
         <circle cx="24" cy="24" r="21" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="3"/>
@@ -408,7 +438,6 @@
       </svg></light>
     </icon>
     
-    <!-- 8. Curve Command SVGs -->
     <icon guid="d0000001-0000-0000-0000-000000000001" name="ccGCon.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
         <path d="M 6 32 Q 16 8 24 24 T 42 16" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
@@ -479,7 +508,7 @@
       </svg></light>
     </icon>
 
-    <icon guid="d0000001-0000-0000-0000-000000000011" name="ccMakeUniform.svg">
+    <icon guid="d0000001-0000-0000-0000-000000000011" name="ccToUniform.svg">
       <light><svg width="48" height="48" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
         <path d="M 8 8 C 8 48 40 48 40 8" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
       </svg></light>
@@ -492,6 +521,44 @@
         <path d="M 12 44 L 4 44 L 4 36" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="3" stroke-linecap="square" stroke-linejoin="miter"/>
       </svg></light>
     </icon>
+
+    <!-- NEW 4 ICONS -->
+    
+    <icon guid="d0000001-0000-0000-0000-000000000014" name="ccMatchCrv.svg">
+      <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <line x1="8" y1="24" x2="40" y2="24" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="2" stroke-dasharray="4,2"/>
+        <path d="M 4 40 C 12 40 16 24 24 24" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+        <path d="M 24 24 C 32 24 36 8 44 8" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+        <rect x="21" y="21" width="6" height="6" fill="#000000" fill-dark="#FFFFFF"/>
+      </svg></light>
+    </icon>
+
+    <icon guid="d0000001-0000-0000-0000-000000000015" name="ccSmoothPolycrvJoints.svg">
+      <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 6 40 L 14 40 A 10 10 0 0 0 24 30 L 24 18 A 10 10 0 0 1 34 8 L 42 8" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="14" cy="40" r="3.5" fill="#00AA00" fill-dark="#55FF55"/>
+        <circle cx="24" cy="30" r="3.5" fill="#00AA00" fill-dark="#55FF55"/>
+        <circle cx="24" cy="18" r="3.5" fill="#00AA00" fill-dark="#55FF55"/>
+        <circle cx="34" cy="8" r="3.5" fill="#00AA00" fill-dark="#55FF55"/>
+      </svg></light>
+    </icon>
+
+    <icon guid="d0000001-0000-0000-0000-000000000016" name="ccInflectionPts.svg">
+      <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 6 42 C 24 42 24 6 42 6" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="24" cy="24" r="4" fill="#0055FF" fill-dark="#66B2FF"/>
+        <line x1="16" y1="32" x2="32" y2="16" stroke="#0055FF" stroke-dark="#66B2FF" stroke-width="2"/>
+      </svg></light>
+    </icon>
+
+    <icon guid="d0000001-0000-0000-0000-000000000017" name="ccRadiusMinima.svg">
+      <light><svg width="48" height="48" version="1.1" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 10 42 C 10 6 38 6 38 42" fill="none" stroke="#000000" stroke-dark="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+        <path d="M 14 24 A 12 12 0 0 1 34 24" fill="none" stroke="#888888" stroke-dark="#AAAAAA" stroke-width="2"/>
+        <circle cx="24" cy="13" r="4" fill="#E00000" fill-dark="#CC0000"/>
+      </svg></light>
+    </icon>
+
   </icons>
   
   <bitmaps>
