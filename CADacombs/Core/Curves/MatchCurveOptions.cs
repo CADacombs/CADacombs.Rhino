@@ -22,7 +22,7 @@ namespace CADacombs.Core.Curves
         // 0 = First curve, 1 = Average curves, 2 = Minimize deviation (Either/Both)
         public static int ModifyMode { get; set; } = 2; 
 
-        public static bool LimitCrvDev { get; set; } = true;
+        public static bool LimitCrvDev { get; set; } = false;
         public static double DevTol { get; set; } = -1.0;
         
         public static bool DeformLines { get; set; } = false;

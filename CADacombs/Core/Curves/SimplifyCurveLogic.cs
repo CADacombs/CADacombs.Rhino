@@ -149,7 +149,10 @@ namespace CADacombs.Core.Curves
             if (doSpansToBeziers && targetDegrees != null && targetDegrees.Count > 0)
             {
                 SpanConversionUtils.CurveEvaluator bezierEval = c => {
-                    var evalRes = ConvertToBezierLogic.TryConvert(c, targetDegrees, true, distTol, true, false, false, false, false, false);
+                    var evalRes = ConvertToBezierLogic.TryConvert(
+                        c, targetDegrees, true, distTol,
+                        KnotRemovalUtils.PreserveEndType.Tangency, true,
+                        true, true, true, true, true, false);
                     return (evalRes.Bezier, evalRes.Deviation, evalRes.Log);
                 };
                 ApplyStepIfValid(c => ProcessSpans(c, bezierEval, cv => cv is LineCurve || cv is PolylineCurve || cv is ArcCurve, false, 0.0, distTol, minSegLen, 0.0, true).Curve);
