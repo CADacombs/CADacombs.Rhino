@@ -71,26 +71,26 @@ namespace CADacombs.Core.Curves
                     currentCont = perfectLevel ?? 0;
                 }
 
-                NurbsCurve resA = null;
-                NurbsCurve resB = null;
+                Curve resA = null;
+                Curve resB = null;
                 bool jointResolved = false;
 
-                bool TryMatch(int targetContinuity, out NurbsCurve rA, out NurbsCurve rB)
+                bool TryMatch(int targetContinuity, out Curve rA, out Curve rB)
                 {
                     rA = null; rB = null;
                     if (modA && modB)
                     {
-                        var res = CurveMatchMath.MatchBothCurves(segA, segB, true, false, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
+                        var res = CurveMatchMath.MatchBothCurves(segA, segB, true, false, targetContinuity, 2, 0, 0, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
                         rA = res.ResultA; rB = res.ResultB;
                     }
                     else if (modA && !modB)
                     {
-                        var res = CurveMatchMath.MatchOneCurve(segA, segB, true, false, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
+                        var res = CurveMatchMath.MatchOneCurve(segA, segB, true, false, targetContinuity, 2, 0, 0, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
                         rA = res.Result;
                     }
                     else if (!modA && modB)
                     {
-                        var res = CurveMatchMath.MatchOneCurve(segB, segA, false, true, targetContinuity, 2, false, false, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
+                        var res = CurveMatchMath.MatchOneCurve(segB, segA, false, true, targetContinuity, 2, 0, 0, 2, currentDevTol, false, false, 2, posTol, skipAngleTolDeg, skipCurvTolPct, debug);
                         rB = res.Result;
                     }
                     return (rA != null || rB != null);

@@ -2,14 +2,13 @@ using System.Drawing;
 using Rhino;
 using Rhino.Display;
 using Rhino.Geometry;
-using CADacombs.Core.Curves;
 
 namespace CADacombs.Commands.Modeling.Curves
 {
     public class MatchCrvConduit : DisplayConduit
     {
-        public NurbsCurve ResultA { get; set; }
-        public NurbsCurve ResultB { get; set; }
+        public Curve ResultA { get; set; }
+        public Curve ResultB { get; set; }
         public Color FeedbackColor { get; set; }
 
         public MatchCrvConduit()

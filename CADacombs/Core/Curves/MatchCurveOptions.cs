@@ -9,33 +9,34 @@ namespace CADacombs.Core.Curves
         public static Point? WindowLocation { get; set; }
 
         // 0 = Position, 1 = Tangency, 2 = Curvature
-        public static int Continuity { get; set; } = 1; 
-        
-        public static double PosTol { get; set; } = -1.0; 
-        public static double AngleTolDeg { get; set; } = -1.0; 
-        public static double CurvatureMagTolPct { get; set; } = 1e-8; 
+        public static int Continuity { get; set; } = 1;
+
+        public static double PosTol { get; set; } = -1.0;
+        public static double AngleTolDeg { get; set; } = -1.0;
+        public static double CurvatureMagTolPct { get; set; } = 1e-8;
         public static bool SkipIfAlreadyAtContinuity { get; set; } = true;
-        
+
         // 0 = None, 1 = Position, 2 = Tangency, 3 = Curvature, 4 = Periodic
-        public static int PreserveOtherEnd { get; set; } = 2; 
-        
+        public static int PreserveOtherEnd { get; set; } = 2;
+
         // 0 = First curve, 1 = Average curves, 2 = Minimize deviation (Either/Both)
-        public static int ModifyMode { get; set; } = 2; 
+        public static int ModifyMode { get; set; } = 2;
 
         public static bool LimitCrvDev { get; set; } = false;
         public static double DevTol { get; set; } = -1.0;
-        
-        public static bool DeformLines { get; set; } = false;
-        public static bool DeformArcs { get; set; } = false;
-        
+
+        // 0 = Lock, 1 = Keep type (Analytical), 2 = Convert to NURBS
+        public static int LineMode { get; set; } = 1;
+        public static int ArcMode { get; set; } = 1;
+
         // 0 = Deg, 1 = Span ct, 2 = None
-        public static int IncrAsNeeded { get; set; } = 0; 
-        
+        public static int IncrAsNeeded { get; set; } = 0;
+
         public static bool PreventExtraInflections { get; set; } = false;
         public static bool PreserveInternalContinuity { get; set; } = true;
-        
+
         // 2 = G2, 3 = G3
-        public static int MaxInternalContinuity { get; set; } = 2; 
+        public static int MaxInternalContinuity { get; set; } = 2;
 
         public static bool DeleteInput { get; set; } = true;
         public static bool Echo { get; set; } = true; // Excluded from Load/Save so it resets default for script runners
@@ -44,15 +45,11 @@ namespace CADacombs.Core.Curves
         public static void Load(Rhino.PersistentSettings settings)
         {
             Continuity = settings.GetInteger("MatchCrv_Continuity", Continuity);
-            
+
             PosTol = settings.GetDouble("MatchCrv_PosTol", PosTol);
-            // if (PosTol <= 0) PosTol = 0.0001 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
             if (PosTol <= 0) PosTol = RhinoMath.ZeroTolerance;
 
             AngleTolDeg = settings.GetDouble("MatchCrv_AngleTolDeg", AngleTolDeg);
-            // if (AngleTolDeg <= 0) AngleTolDeg = 0.1 * RhinoMath.ToDegrees(RhinoDoc.ActiveDoc.ModelAngleToleranceRadians);
-            // Derived from Math.Acos(1.0 - Math.Pow(2, -52)) where 2^-52 is double-precision machine epsilon.
-            // At this angle, the dot product of two vectors evaluates mathematically to 1.0.
             if (AngleTolDeg <= 0) AngleTolDeg = 1.2074182697257333e-06;
 
             CurvatureMagTolPct = settings.GetDouble("MatchCrv_CurvatureMagTolPct", CurvatureMagTolPct);
@@ -60,13 +57,13 @@ namespace CADacombs.Core.Curves
             SkipIfAlreadyAtContinuity = settings.GetBool("MatchCrv_SkipIfAlreadyAtContinuity", SkipIfAlreadyAtContinuity);
             PreserveOtherEnd = settings.GetInteger("MatchCrv_PreserveOtherEnd", PreserveOtherEnd);
             ModifyMode = settings.GetInteger("MatchCrv_ModifyMode", ModifyMode);
-            
+
             LimitCrvDev = settings.GetBool("MatchCrv_LimitCrvDev", LimitCrvDev);
             DevTol = settings.GetDouble("MatchCrv_DevTol", DevTol);
             if (DevTol <= 0) DevTol = 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
 
-            DeformLines = settings.GetBool("MatchCrv_DeformLines", DeformLines);
-            DeformArcs = settings.GetBool("MatchCrv_DeformArcs", DeformArcs);
+            LineMode = settings.GetInteger("MatchCrv_LineMode", LineMode);
+            ArcMode = settings.GetInteger("MatchCrv_ArcMode", ArcMode);
             IncrAsNeeded = settings.GetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
             PreventExtraInflections = settings.GetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
             PreserveInternalContinuity = settings.GetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);
@@ -74,7 +71,7 @@ namespace CADacombs.Core.Curves
 
             DeleteInput = settings.GetBool("MatchCrv_DeleteInput", DeleteInput);
             Debug = settings.GetBool("MatchCrv_Debug", Debug);
-            
+
             int x = settings.GetInteger("MatchCrv_WindowX", -1);
             int y = settings.GetInteger("MatchCrv_WindowY", -1);
             if (x != -1 && y != -1) WindowLocation = new Point(x, y);
@@ -89,12 +86,12 @@ namespace CADacombs.Core.Curves
             settings.SetBool("MatchCrv_SkipIfAlreadyAtContinuity", SkipIfAlreadyAtContinuity);
             settings.SetInteger("MatchCrv_PreserveOtherEnd", PreserveOtherEnd);
             settings.SetInteger("MatchCrv_ModifyMode", ModifyMode);
-            
+
             settings.SetBool("MatchCrv_LimitCrvDev", LimitCrvDev);
             settings.SetDouble("MatchCrv_DevTol", DevTol);
-            
-            settings.SetBool("MatchCrv_DeformLines", DeformLines);
-            settings.SetBool("MatchCrv_DeformArcs", DeformArcs);
+
+            settings.SetInteger("MatchCrv_LineMode", LineMode);
+            settings.SetInteger("MatchCrv_ArcMode", ArcMode);
             settings.SetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
             settings.SetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
             settings.SetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);
