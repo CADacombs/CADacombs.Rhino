@@ -6,6 +6,10 @@ namespace CADacombs.Core.Curves
 {
     public static class MatchCrvOptions
     {
+        // Derived from Math.Acos(1.0 - Math.Pow(2, -52)) where 2^-52 is double-precision machine epsilon.
+        public const double DefaultAngleTolDeg = 1.2074182697257333e-06;
+        public const double DefaultCurvatureMagTolPct = 1e-8;
+
         public static Point? WindowLocation { get; set; }
 
         // 0 = Position, 1 = Tangency, 2 = Curvature
@@ -13,10 +17,10 @@ namespace CADacombs.Core.Curves
 
         public static double PosTol { get; set; } = -1.0;
         public static double AngleTolDeg { get; set; } = -1.0;
-        public static double CurvatureMagTolPct { get; set; } = 1e-8;
+        public static double CurvatureMagTolPct { get; set; } = DefaultCurvatureMagTolPct;
         public static bool SkipIfAlreadyAtContinuity { get; set; } = true;
 
-        // 0 = None, 1 = Position, 2 = Tangency, 3 = Curvature, 4 = Periodic
+        // 0 = None, 1 = Position, 2 = Tangency, 3 = Curvature
         public static int PreserveOtherEnd { get; set; } = 2;
 
         // 0 = First curve, 1 = Average curves, 2 = Minimize deviation (Either/Both)
@@ -25,14 +29,14 @@ namespace CADacombs.Core.Curves
         public static bool LimitCrvDev { get; set; } = false;
         public static double DevTol { get; set; } = -1.0;
 
-        // 0 = Lock, 1 = Keep type (Analytical), 2 = Convert to NURBS
+        // 0 = Lock, 1 = Keep as line / Keep as arc, 2 = Convert to NURBS
         public static int LineMode { get; set; } = 1;
         public static int ArcMode { get; set; } = 1;
 
         // 0 = Deg, 1 = Span ct, 2 = None
         public static int IncrAsNeeded { get; set; } = 0;
 
-        public static bool PreventExtraInflections { get; set; } = false;
+        public static bool PreventExtraInflections { get; set; } = true;
         public static bool PreserveInternalContinuity { get; set; } = true;
 
         // 2 = G2, 3 = G3
@@ -42,32 +46,39 @@ namespace CADacombs.Core.Curves
         public static bool Echo { get; set; } = true; // Excluded from Load/Save so it resets default for script runners
         public static bool Debug { get; set; } = false;
 
+        public static double GetDefaultPosTol() => RhinoMath.ZeroTolerance;
+        public static double GetDefaultAngleTolDeg() => DefaultAngleTolDeg;
+        public static double GetDefaultCurvMagTolPct() => DefaultCurvatureMagTolPct;
+        public static double GetDefaultDevTol() =>
+            RhinoDoc.ActiveDoc != null ? 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance : 1e-4;
+
         public static void Load(Rhino.PersistentSettings settings)
         {
-            Continuity = settings.GetInteger("MatchCrv_Continuity", Continuity);
+            Continuity = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_Continuity", Continuity)));
 
             PosTol = settings.GetDouble("MatchCrv_PosTol", PosTol);
-            if (PosTol <= 0) PosTol = RhinoMath.ZeroTolerance;
+            if (PosTol <= 0) PosTol = GetDefaultPosTol();
 
             AngleTolDeg = settings.GetDouble("MatchCrv_AngleTolDeg", AngleTolDeg);
-            if (AngleTolDeg <= 0) AngleTolDeg = 1.2074182697257333e-06;
+            if (AngleTolDeg <= 0) AngleTolDeg = GetDefaultAngleTolDeg();
 
             CurvatureMagTolPct = settings.GetDouble("MatchCrv_CurvatureMagTolPct", CurvatureMagTolPct);
+            if (CurvatureMagTolPct <= 0) CurvatureMagTolPct = GetDefaultCurvMagTolPct();
 
             SkipIfAlreadyAtContinuity = settings.GetBool("MatchCrv_SkipIfAlreadyAtContinuity", SkipIfAlreadyAtContinuity);
-            PreserveOtherEnd = settings.GetInteger("MatchCrv_PreserveOtherEnd", PreserveOtherEnd);
-            ModifyMode = settings.GetInteger("MatchCrv_ModifyMode", ModifyMode);
+            PreserveOtherEnd = Math.Max(0, Math.Min(3, settings.GetInteger("MatchCrv_PreserveOtherEnd", PreserveOtherEnd)));
+            ModifyMode = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_ModifyMode", ModifyMode)));
 
             LimitCrvDev = settings.GetBool("MatchCrv_LimitCrvDev", LimitCrvDev);
             DevTol = settings.GetDouble("MatchCrv_DevTol", DevTol);
-            if (DevTol <= 0) DevTol = 0.1 * RhinoDoc.ActiveDoc.ModelAbsoluteTolerance;
+            if (DevTol <= 0) DevTol = GetDefaultDevTol();
 
-            LineMode = settings.GetInteger("MatchCrv_LineMode", LineMode);
-            ArcMode = settings.GetInteger("MatchCrv_ArcMode", ArcMode);
-            IncrAsNeeded = settings.GetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
+            LineMode = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_LineMode", LineMode)));
+            ArcMode = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_ArcMode", ArcMode)));
+            IncrAsNeeded = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded)));
             PreventExtraInflections = settings.GetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
             PreserveInternalContinuity = settings.GetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);
-            MaxInternalContinuity = settings.GetInteger("MatchCrv_MaxInternalContinuity", MaxInternalContinuity);
+            MaxInternalContinuity = settings.GetInteger("MatchCrv_MaxInternalContinuity", MaxInternalContinuity) == 3 ? 3 : 2;
 
             DeleteInput = settings.GetBool("MatchCrv_DeleteInput", DeleteInput);
             Debug = settings.GetBool("MatchCrv_Debug", Debug);

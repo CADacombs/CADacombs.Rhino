@@ -44,6 +44,11 @@ namespace CADacombs.Commands.Modeling.Curves
         private TextBox _txtAngleTol;
         private TextBox _txtCurvTol;
 
+        private string _initDevTolText;
+        private string _initPosTolText;
+        private string _initAngleTolText;
+        private string _initCurvTolText;
+
         private CheckBox _chkDeleteInput;
         private CheckBox _chkDebug;
 
@@ -112,19 +117,22 @@ namespace CADacombs.Commands.Modeling.Curves
             _rblModifyMode.SelectedIndex = MatchCrvOptions.ModifyMode;
             _rblModifyMode.SelectedIndexChanged += OnOptionChanged;
 
-            _chkLimitDev = new CheckBox { Text = "Crv dev limit:" };
-            _chkLimitDev.Checked = MatchCrvOptions.LimitCrvDev;
+            _initDevTolText = FormatUtils.FormatTolerance(MatchCrvOptions.DevTol, prec);
+            _initPosTolText = FormatUtils.FormatTolerance(MatchCrvOptions.PosTol, prec);
+            _initAngleTolText = FormatUtils.FormatTolerance(MatchCrvOptions.AngleTolDeg, prec);
+            _initCurvTolText = FormatUtils.FormatTolerance(MatchCrvOptions.CurvatureMagTolPct, prec);
+
+            _chkLimitDev = new CheckBox { Text = "Crv dev limit:", Checked = MatchCrvOptions.LimitCrvDev };
             _chkLimitDev.CheckedChanged += OnOptionChanged;
-            _txtDevTol = new TextBox { Text = FormatUtils.FormatTolerance(MatchCrvOptions.DevTol, prec), Width = 60 };
+            _txtDevTol = new TextBox { Text = _initDevTolText, Width = 60 };
             _txtDevTol.TextChanged += OnToleranceTextChanged;
 
-            _chkSkipAtCont = new CheckBox { Text = "Skip if already continuous" };
-            _chkSkipAtCont.Checked = MatchCrvOptions.SkipIfAlreadyAtContinuity;
+            _chkSkipAtCont = new CheckBox { Text = "Skip if already continuous", Checked = MatchCrvOptions.SkipIfAlreadyAtContinuity };
             _chkSkipAtCont.CheckedChanged += OnOptionChanged;
 
-            _txtPosTol = new TextBox { Text = FormatUtils.FormatTolerance(MatchCrvOptions.PosTol, prec), Width = 60 };
-            _txtAngleTol = new TextBox { Text = FormatUtils.FormatTolerance(MatchCrvOptions.AngleTolDeg, prec), Width = 60 };
-            _txtCurvTol = new TextBox { Text = FormatUtils.FormatTolerance(MatchCrvOptions.CurvatureMagTolPct, prec), Width = 60 };
+            _txtPosTol = new TextBox { Text = _initPosTolText, Width = 60 };
+            _txtAngleTol = new TextBox { Text = _initAngleTolText, Width = 60 };
+            _txtCurvTol = new TextBox { Text = _initCurvTolText, Width = 60 };
 
             _txtPosTol.TextChanged += OnToleranceTextChanged;
             _txtAngleTol.TextChanged += OnToleranceTextChanged;
@@ -132,14 +140,14 @@ namespace CADacombs.Commands.Modeling.Curves
 
             _ddLineMode = new DropDown();
             _ddLineMode.Items.Add("Lock");
-            _ddLineMode.Items.Add("Keep type");
+            _ddLineMode.Items.Add("Keep as line");
             _ddLineMode.Items.Add("Convert to NURBS");
             _ddLineMode.SelectedIndex = Math.Max(0, Math.Min(2, MatchCrvOptions.LineMode));
             _ddLineMode.SelectedIndexChanged += OnOptionChanged;
 
             _ddArcMode = new DropDown();
             _ddArcMode.Items.Add("Lock");
-            _ddArcMode.Items.Add("Keep type");
+            _ddArcMode.Items.Add("Keep as arc");
             _ddArcMode.Items.Add("Convert to NURBS");
             _ddArcMode.SelectedIndex = Math.Max(0, Math.Min(2, MatchCrvOptions.ArcMode));
             _ddArcMode.SelectedIndexChanged += OnOptionChanged;
@@ -156,7 +164,7 @@ namespace CADacombs.Commands.Modeling.Curves
             _rbDeg.CheckedChanged += OnOptionChanged;
             _rbSpan.CheckedChanged += OnOptionChanged;
 
-            _chkPreventInflections = new CheckBox { Text = "Prevent extra inflection pts", Checked = MatchCrvOptions.PreventExtraInflections };
+            _chkPreventInflections = new CheckBox { Text = "Reject added inflection pts", Checked = MatchCrvOptions.PreventExtraInflections };
             _chkPreventInflections.CheckedChanged += OnOptionChanged;
 
             _chkPreserveInternalCont = new CheckBox { Text = "Preserve internal continuity", Checked = MatchCrvOptions.PreserveInternalContinuity };
@@ -219,15 +227,24 @@ namespace CADacombs.Commands.Modeling.Curves
             primGrid.Rows.Add(new TableRow(new Label { Text = "Arcs:", VerticalAlignment = VerticalAlignment.Center }, _ddArcMode, null));
             layout.AddRow(primGrid);
 
-            layout.AddRow(_chkIncrAsNeeded);
+            layout.AddRow(new Label { Text = "NURBS curves:" });
+
             var incrStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, Items = { _rbDeg, _rbSpan } };
-            layout.AddRow(new Panel { Padding = new Padding(24, 0, 0, 0), Content = incrStack });
-
-            layout.AddRow(_chkPreventInflections);
-            layout.AddRow(_chkPreserveInternalCont);
-
             var maxIntStack = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 8, VerticalContentAlignment = VerticalAlignment.Center, Items = { new Label { Text = "up through" }, _rbIntG2, _rbIntG3 } };
-            layout.AddRow(new Panel { Padding = new Padding(24, 0, 0, 0), Content = maxIntStack });
+
+            var nurbsStack = new StackLayout
+            {
+                Spacing = 5,
+                Items =
+                {
+                    _chkIncrAsNeeded,
+                    new Panel { Padding = new Padding(24, 0, 0, 0), Content = incrStack },
+                    _chkPreventInflections,
+                    _chkPreserveInternalCont,
+                    new Panel { Padding = new Padding(24, 0, 0, 0), Content = maxIntStack }
+                }
+            };
+            layout.AddRow(new Panel { Padding = new Padding(12, 0, 0, 0), Content = nurbsStack });
 
             layout.AddRow(new Panel { Height = 1, BackgroundColor = Colors.LightGrey });
 
@@ -241,6 +258,12 @@ namespace CADacombs.Commands.Modeling.Curves
             Content = layout;
         }
 
+        private double GetEffectiveTolerance(TextBox tb, string initialFormattedText, double exactOptionValue)
+        {
+            if (tb.Text == initialFormattedText) return exactOptionValue;
+            return double.Parse(tb.Text);
+        }
+
         private void OnOptionChanged(object sender, EventArgs e)
         {
             UpdateControlStates();
@@ -251,6 +274,7 @@ namespace CADacombs.Commands.Modeling.Curves
         {
             if (_isUpdatingTextProgrammatically) return;
             _previewPending = true;
+            _btnOk.Enabled = false;
             _typingTimer.Stop();
             _typingTimer.Start();
         }
@@ -262,22 +286,42 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 bool allValid = true;
                 _isUpdatingTextProgrammatically = true;
+                int prec = RhinoDoc.ActiveDoc.ModelDistanceDisplayPrecision;
 
-                bool ProcessBox(TextBox tb)
+                bool ProcessBox(TextBox tb, ref string initText, ref double backingVal, double defaultVal)
                 {
-                    if (!double.TryParse(tb.Text, out _))
+                    if (!double.TryParse(tb.Text, out double val))
                     {
                         tb.BackgroundColor = Colors.LightPink;
                         return false;
                     }
+
+                    if (val <= 0.0)
+                    {
+                        backingVal = defaultVal;
+                        initText = FormatUtils.FormatTolerance(defaultVal, prec);
+                        tb.Text = initText;
+                        tb.CaretIndex = 0;
+                    }
+
                     tb.BackgroundColor = Colors.White;
                     return true;
                 }
 
-                allValid &= ProcessBox(_txtDevTol);
-                allValid &= ProcessBox(_txtPosTol);
-                allValid &= ProcessBox(_txtAngleTol);
-                allValid &= ProcessBox(_txtCurvTol);
+                double devOpt = MatchCrvOptions.DevTol;
+                double posOpt = MatchCrvOptions.PosTol;
+                double angOpt = MatchCrvOptions.AngleTolDeg;
+                double crvOpt = MatchCrvOptions.CurvatureMagTolPct;
+
+                allValid &= ProcessBox(_txtDevTol, ref _initDevTolText, ref devOpt, MatchCrvOptions.GetDefaultDevTol());
+                allValid &= ProcessBox(_txtPosTol, ref _initPosTolText, ref posOpt, MatchCrvOptions.GetDefaultPosTol());
+                allValid &= ProcessBox(_txtAngleTol, ref _initAngleTolText, ref angOpt, MatchCrvOptions.GetDefaultAngleTolDeg());
+                allValid &= ProcessBox(_txtCurvTol, ref _initCurvTolText, ref crvOpt, MatchCrvOptions.GetDefaultCurvMagTolPct());
+
+                MatchCrvOptions.DevTol = devOpt;
+                MatchCrvOptions.PosTol = posOpt;
+                MatchCrvOptions.AngleTolDeg = angOpt;
+                MatchCrvOptions.CurvatureMagTolPct = crvOpt;
 
                 _isUpdatingTextProgrammatically = false;
                 if (allValid) UpdatePreview(true);
@@ -304,28 +348,28 @@ namespace CADacombs.Commands.Modeling.Curves
 
         private void UpdatePreview(bool printReport = false)
         {
-            if (_previewPending && !ValidateTolerances())
+            if (!ValidateTolerances())
             {
                 _btnOk.Enabled = false;
                 return;
             }
 
+            double posTol = GetEffectiveTolerance(_txtPosTol, _initPosTolText, MatchCrvOptions.PosTol);
+            double angleTol = GetEffectiveTolerance(_txtAngleTol, _initAngleTolText, MatchCrvOptions.AngleTolDeg);
+            double curvTol = GetEffectiveTolerance(_txtCurvTol, _initCurvTolText, MatchCrvOptions.CurvatureMagTolPct);
+            int cont = _rblContinuity.SelectedIndex;
+
             bool skipChecked = _chkSkipAtCont.Checked ?? false;
             if (skipChecked)
             {
-                double currentPosTol = double.Parse(_txtPosTol.Text);
-                double currentAngleTol = double.Parse(_txtAngleTol.Text);
-                double currentCurvTol = double.Parse(_txtCurvTol.Text);
-                int currentCont = _rblContinuity.SelectedIndex;
-
-                if (CurveMatchMath.AreCurvesAtContinuity(_crvA, _bT1WorkEndA, _crvB, _bT1WorkEndB, currentCont, currentPosTol, currentAngleTol, currentCurvTol))
+                if (CurveMatchMath.AreCurvesAtContinuity(_crvA, _bT1WorkEndA, _crvB, _bT1WorkEndB, cont, posTol, angleTol, curvTol))
                 {
-                    ResultCurveA = null;
-                    ResultCurveB = null;
-                    LastErrorMessage = $"Curves already meet at G{currentCont} continuity.";
-
                     _conduit.ResultA = null;
                     _conduit.ResultB = null;
+                    ResultCurveA?.Dispose(); ResultCurveA = null;
+                    ResultCurveB?.Dispose(); ResultCurveB = null;
+                    LastErrorMessage = $"Curves already meet at G{cont} continuity.";
+
                     RhinoDoc.ActiveDoc.Views.Redraw();
 
                     _btnOk.Enabled = false;
@@ -336,16 +380,12 @@ namespace CADacombs.Commands.Modeling.Curves
                 }
             }
 
-            int cont = _rblContinuity.SelectedIndex;
             int preserve = _rblPreserve.SelectedIndex;
             int modify = _rblModifyMode.SelectedIndex;
 
             bool limitDev = _chkLimitDev.Checked ?? false;
-            double devTol = limitDev ? double.Parse(_txtDevTol.Text) : double.MaxValue;
-
-            double posTol = double.Parse(_txtPosTol.Text);
-            double angleTol = double.Parse(_txtAngleTol.Text);
-            double curvTol = double.Parse(_txtCurvTol.Text);
+            double parsedDevTol = GetEffectiveTolerance(_txtDevTol, _initDevTolText, MatchCrvOptions.DevTol);
+            double devTol = limitDev ? parsedDevTol : double.MaxValue;
 
             int lineMode = _ddLineMode.SelectedIndex;
             int arcMode = _ddArcMode.SelectedIndex;
@@ -356,6 +396,8 @@ namespace CADacombs.Commands.Modeling.Curves
             int maxInternal = _rbIntG3.Checked ? 3 : 2;
             bool debug = _chkDebug.Checked ?? false;
 
+            _conduit.ResultA = null;
+            _conduit.ResultB = null;
             ResultCurveA?.Dispose(); ResultCurveA = null;
             ResultCurveB?.Dispose(); ResultCurveB = null;
 
@@ -372,7 +414,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (ResultCurveA != null)
                 {
                     maxDev = CurveMatchMath.GetMaximumDeviation(_crvA, ResultCurveA);
-                    avgDev = CurveMatchMath.GetAverageDeviation(_crvA, ResultCurveA);
+                    avgDev = CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, ResultCurveA, _bT1WorkEndA);
                 }
             }
             else if (modify == 1) // Average
@@ -385,17 +427,18 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (ResultCurveA != null && ResultCurveB != null)
                 {
                     maxDev = Math.Max(CurveMatchMath.GetMaximumDeviation(_crvA, ResultCurveA), CurveMatchMath.GetMaximumDeviation(_crvB, ResultCurveB));
-                    avgDev = (CurveMatchMath.GetAverageDeviation(_crvA, ResultCurveA) + CurveMatchMath.GetAverageDeviation(_crvB, ResultCurveB)) / 2.0;
+                    avgDev = (CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, ResultCurveA, _bT1WorkEndA) +
+                              CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, ResultCurveB, _bT1WorkEndB)) / 2.0;
                 }
                 else if (ResultCurveA != null)
                 {
                     maxDev = CurveMatchMath.GetMaximumDeviation(_crvA, ResultCurveA);
-                    avgDev = CurveMatchMath.GetAverageDeviation(_crvA, ResultCurveA);
+                    avgDev = CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, ResultCurveA, _bT1WorkEndA);
                 }
                 else if (ResultCurveB != null)
                 {
                     maxDev = CurveMatchMath.GetMaximumDeviation(_crvB, ResultCurveB);
-                    avgDev = CurveMatchMath.GetAverageDeviation(_crvB, ResultCurveB);
+                    avgDev = CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, ResultCurveB, _bT1WorkEndB);
                 }
             }
             else if (modify == 2) // Minimize Deviation
@@ -407,15 +450,16 @@ namespace CADacombs.Commands.Modeling.Curves
                 Curve candA = resFirst.Result;
                 Curve candB = resSecond.Result;
 
-                double devA = candA != null ? CurveMatchMath.GetAverageDeviation(_crvA, candA) : double.MaxValue;
-                double devB = candB != null ? CurveMatchMath.GetAverageDeviation(_crvB, candB) : double.MaxValue;
+                double devA = candA != null ? CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, candA, _bT1WorkEndA) : double.MaxValue;
+                double devB = candB != null ? CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, candB, _bT1WorkEndB) : double.MaxValue;
                 double devBoth = double.MaxValue;
                 if (bothResult.ResultA != null && bothResult.ResultB != null)
-                    devBoth = (CurveMatchMath.GetAverageDeviation(_crvA, bothResult.ResultA) + CurveMatchMath.GetAverageDeviation(_crvB, bothResult.ResultB)) / 2.0;
+                    devBoth = (CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, bothResult.ResultA, _bT1WorkEndA) +
+                               CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, bothResult.ResultB, _bT1WorkEndB)) / 2.0;
                 else if (bothResult.ResultA != null)
-                    devBoth = CurveMatchMath.GetAverageDeviation(_crvA, bothResult.ResultA);
+                    devBoth = CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, bothResult.ResultA, _bT1WorkEndA);
                 else if (bothResult.ResultB != null)
-                    devBoth = CurveMatchMath.GetAverageDeviation(_crvB, bothResult.ResultB);
+                    devBoth = CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, bothResult.ResultB, _bT1WorkEndB);
 
                 double minDev = Math.Min(devA, Math.Min(devB, devBoth));
 
@@ -445,17 +489,18 @@ namespace CADacombs.Commands.Modeling.Curves
                 if (ResultCurveA != null && ResultCurveB == null)
                 {
                     maxDev = CurveMatchMath.GetMaximumDeviation(_crvA, ResultCurveA);
-                    avgDev = CurveMatchMath.GetAverageDeviation(_crvA, ResultCurveA);
+                    avgDev = CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, ResultCurveA, _bT1WorkEndA);
                 }
                 else if (ResultCurveB != null && ResultCurveA == null)
                 {
                     maxDev = CurveMatchMath.GetMaximumDeviation(_crvB, ResultCurveB);
-                    avgDev = CurveMatchMath.GetAverageDeviation(_crvB, ResultCurveB);
+                    avgDev = CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, ResultCurveB, _bT1WorkEndB);
                 }
                 else if (ResultCurveA != null && ResultCurveB != null)
                 {
                     maxDev = Math.Max(CurveMatchMath.GetMaximumDeviation(_crvA, ResultCurveA), CurveMatchMath.GetMaximumDeviation(_crvB, ResultCurveB));
-                    avgDev = (CurveMatchMath.GetAverageDeviation(_crvA, ResultCurveA) + CurveMatchMath.GetAverageDeviation(_crvB, ResultCurveB)) / 2.0;
+                    avgDev = (CurveMatchMath.GetEndSegmentAverageDeviation(_crvA, ResultCurveA, _bT1WorkEndA) +
+                              CurveMatchMath.GetEndSegmentAverageDeviation(_crvB, ResultCurveB, _bT1WorkEndB)) / 2.0;
                 }
             }
 
@@ -496,42 +541,29 @@ namespace CADacombs.Commands.Modeling.Curves
 
         private bool ValidateTolerances()
         {
-            return double.TryParse(_txtDevTol.Text, out _) &&
-                   double.TryParse(_txtPosTol.Text, out _) &&
-                   double.TryParse(_txtAngleTol.Text, out _) &&
-                   double.TryParse(_txtCurvTol.Text, out _);
+            return double.TryParse(_txtDevTol.Text, out double d) && d > 0.0 &&
+                   double.TryParse(_txtPosTol.Text, out double p) && p > 0.0 &&
+                   double.TryParse(_txtAngleTol.Text, out double a) && a > 0.0 &&
+                   double.TryParse(_txtCurvTol.Text, out double c) && c > 0.0;
         }
 
-        protected override void OnClosed(EventArgs e)
+        private void SaveUIToOptions()
         {
-            if (_typingTimer != null)
-            {
-                _typingTimer.Stop();
-                _typingTimer.Dispose();
-            }
-            _conduit.Enabled = false;
-            RhinoDoc.ActiveDoc.Views.Redraw();
-            base.OnClosed(e);
-        }
-
-        private void OnOkClicked(object sender, EventArgs e)
-        {
-            if (!ValidateTolerances()) return;
-
             MatchCrvOptions.Continuity = _rblContinuity.SelectedIndex;
             MatchCrvOptions.PreserveOtherEnd = _rblPreserve.SelectedIndex;
             MatchCrvOptions.ModifyMode = _rblModifyMode.SelectedIndex;
 
             MatchCrvOptions.LimitCrvDev = _chkLimitDev.Checked ?? false;
-            if (MatchCrvOptions.LimitCrvDev) MatchCrvOptions.DevTol = double.Parse(_txtDevTol.Text);
+            if (_txtDevTol.Text != _initDevTolText && double.TryParse(_txtDevTol.Text, out double devVal) && devVal > 0.0)
+                MatchCrvOptions.DevTol = devVal;
 
             MatchCrvOptions.SkipIfAlreadyAtContinuity = _chkSkipAtCont.Checked ?? false;
-            if (MatchCrvOptions.SkipIfAlreadyAtContinuity)
-            {
-                MatchCrvOptions.PosTol = double.Parse(_txtPosTol.Text);
-                MatchCrvOptions.AngleTolDeg = double.Parse(_txtAngleTol.Text);
-                MatchCrvOptions.CurvatureMagTolPct = double.Parse(_txtCurvTol.Text);
-            }
+            if (_txtPosTol.Text != _initPosTolText && double.TryParse(_txtPosTol.Text, out double posVal) && posVal > 0.0)
+                MatchCrvOptions.PosTol = posVal;
+            if (_txtAngleTol.Text != _initAngleTolText && double.TryParse(_txtAngleTol.Text, out double angVal) && angVal > 0.0)
+                MatchCrvOptions.AngleTolDeg = angVal;
+            if (_txtCurvTol.Text != _initCurvTolText && double.TryParse(_txtCurvTol.Text, out double crvVal) && crvVal > 0.0)
+                MatchCrvOptions.CurvatureMagTolPct = crvVal;
 
             MatchCrvOptions.LineMode = _ddLineMode.SelectedIndex;
             MatchCrvOptions.ArcMode = _ddArcMode.SelectedIndex;
@@ -545,10 +577,48 @@ namespace CADacombs.Commands.Modeling.Curves
             MatchCrvOptions.Debug = _chkDebug.Checked ?? false;
 
             MatchCrvOptions.Save(_settings);
+        }
 
-            if (_previewPending) UpdatePreview(true);
+        protected override void OnClosed(EventArgs e)
+        {
+            if (_typingTimer != null)
+            {
+                _typingTimer.Stop();
+                _typingTimer.Dispose();
+            }
 
-            Result = true; Close();
+            _conduit.Enabled = false;
+            _conduit.ResultA = null;
+            _conduit.ResultB = null;
+
+            if (Result != true)
+            {
+                ResultCurveA?.Dispose();
+                ResultCurveA = null;
+                ResultCurveB?.Dispose();
+                ResultCurveB = null;
+            }
+
+            RhinoDoc.ActiveDoc.Views.Redraw();
+
+            // Call base.OnClosed first so CADacombsDialogBase updates MatchCrvOptions.WindowLocation
+            // before SaveUIToOptions writes both options and window coordinates to PersistentSettings.
+            base.OnClosed(e);
+            SaveUIToOptions();
+        }
+
+        private void OnOkClicked(object sender, EventArgs e)
+        {
+            if (!ValidateTolerances()) return;
+
+            if (_previewPending)
+            {
+                UpdatePreview(true);
+                if (ResultCurveA == null && ResultCurveB == null) return;
+            }
+
+            Result = true;
+            Close();
         }
     }
 }
