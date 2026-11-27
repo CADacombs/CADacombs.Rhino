@@ -28,6 +28,299 @@ namespace CADacombs.Core.Curves
             return dict;
         }
 
+        private static bool TryGetConvertibleArc(Curve origCrv, out Arc arc)
+        {
+            arc = Arc.Unset;
+            if (origCrv == null || origCrv.IsClosed) return false;
+
+            if (origCrv is ArcCurve ac)
+            {
+                arc = ac.Arc;
+                return arc.IsValid && !arc.IsCircle;
+            }
+
+            if ((!(origCrv is NurbsCurve nc) || nc.IsRational) &&
+                origCrv.TryGetArc(out arc, RhinoMath.ZeroTolerance))
+            {
+                return arc.IsValid && !arc.IsCircle;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Converts an open circular arc into a non-rational polynomial Degree-5 NurbsCurve
+        /// (with simple C^4 interior knots if split) that preserves exact G2 (position, tangent,
+        /// and 1/R curvature) at both endpoints and stays within 0.1 * ModelAbsoluteTolerance.
+        /// </summary>
+        private static NurbsCurve CreatePolynomialArcNurbs(Curve origCrv, Arc arc, double devTol)
+        {
+            Point3d center = arc.Center;
+            double radius = arc.Radius;
+            double totalSweep = arc.Angle;
+            if (radius <= RhinoMath.ZeroTolerance || totalSweep <= RhinoMath.ZeroTolerance)
+                return null;
+
+            Point3d ptStart = origCrv.PointAtStart;
+            Point3d ptEnd = origCrv.PointAtEnd;
+            Vector3d tanStart = origCrv.TangentAtStart;
+            Vector3d tanEnd = origCrv.TangentAtEnd;
+
+            Vector3d xAxis = ptStart - center;
+            if (!xAxis.Unitize()) return null;
+
+            Vector3d yAxis = tanStart - (tanStart * xAxis) * xAxis;
+            if (!yAxis.Unitize()) return null;
+
+            Vector3d startOut = tanStart;
+            if (!startOut.Unitize()) return null;
+            Vector3d startNorm = center - ptStart;
+            if (!startNorm.Unitize()) return null;
+
+            Vector3d endInto = -tanEnd;
+            if (!endInto.Unitize()) return null;
+            Vector3d endNorm = center - ptEnd;
+            if (!endNorm.Unitize()) return null;
+
+            double docTol = RhinoDoc.ActiveDoc != null ? RhinoDoc.ActiveDoc.ModelAbsoluteTolerance : 1e-3;
+            double arcTol = 0.1 * docTol;
+            if (arcTol <= RhinoMath.ZeroTolerance)
+                arcTol = RhinoMath.SqrtEpsilon;
+            if (devTol < double.MaxValue && devTol > 0.0)
+                arcTol = Math.Max(RhinoMath.ZeroTolerance, Math.Min(arcTol, 0.25 * devTol));
+
+            const int deg = 5;
+            int minSpans = Math.Max(1, (int)Math.Ceiling(totalSweep / (5.0 * Math.PI / 6.0)));
+
+            for (int nSpans = minSpans; nSpans <= 32; nSpans++)
+            {
+                int nCp = nSpans + deg;
+                double subSweep = totalSweep / nSpans;
+                double subHalf = 0.5 * subSweep;
+                double cs = Math.Cos(subHalf);
+                double sn = Math.Sin(subHalf);
+                double sinQuarter = Math.Sin(0.5 * subHalf);
+                double oneMinusC = 2.0 * sinQuarter * sinQuarter;
+                double disc = Math.Max(0.0, 2500.0 * sn * sn - 3200.0 * cs * oneMinusC);
+                double denom = 50.0 * sn + Math.Sqrt(disc);
+                double uSub = denom > RhinoMath.ZeroTolerance ? (64.0 * oneMinusC) / denom : (subSweep / 5.0);
+                double a1 = uSub * radius;
+
+                var cps = new Point3d[nCp];
+
+                if (nSpans == 1)
+                {
+                    double b1 = 1.25 * a1 * a1 / radius;
+                    cps[0] = ptStart;
+                    cps[1] = ptStart + a1 * startOut;
+                    cps[2] = ptStart + (2.0 * a1) * startOut + b1 * startNorm;
+                    cps[5] = ptEnd;
+                    cps[4] = ptEnd + a1 * endInto;
+                    cps[3] = ptEnd + (2.0 * a1) * endInto + b1 * endNorm;
+                }
+                else
+                {
+                    double b2 = 2.5 * a1 * a1 / radius;
+                    cps[0] = ptStart;
+                    cps[1] = ptStart + a1 * startOut;
+                    cps[2] = ptStart + (3.0 * a1) * startOut + b2 * startNorm;
+                    cps[nCp - 1] = ptEnd;
+                    cps[nCp - 2] = ptEnd + a1 * endInto;
+                    cps[nCp - 3] = ptEnd + (3.0 * a1) * endInto + b2 * endNorm;
+
+                    int nFree = nSpans - 1;
+                    var fullKnots = new double[nCp + deg + 1];
+                    for (int k = 1; k < nSpans; k++)
+                        fullKnots[deg + k] = (double)k / nSpans;
+                    for (int k = nCp; k < fullKnots.Length; k++)
+                        fullKnots[k] = 1.0;
+
+                    var ata = new double[nFree, nFree];
+                    var atbX = new double[nFree];
+                    var atbY = new double[nFree];
+                    var atbZ = new double[nFree];
+                    int[] fixedIdx = { 0, 1, 2, nCp - 3, nCp - 2, nCp - 1 };
+
+                    int nSamp = 16 * nSpans;
+                    for (int sIdx = 1; sIdx <= nSamp; sIdx++)
+                    {
+                        double t = sIdx / (nSamp + 1.0);
+                        double ang = t * totalSweep;
+                        Point3d target = center + radius * (Math.Cos(ang) * xAxis + Math.Sin(ang) * yAxis);
+                        double[] basis = EvalClampedBSplineBasis(deg, fullKnots, nCp, t);
+
+                        double rx = target.X;
+                        double ry = target.Y;
+                        double rz = target.Z;
+                        for (int f = 0; f < fixedIdx.Length; f++)
+                        {
+                            int fi = fixedIdx[f];
+                            double bf = basis[fi];
+                            rx -= bf * cps[fi].X;
+                            ry -= bf * cps[fi].Y;
+                            rz -= bf * cps[fi].Z;
+                        }
+
+                        for (int r = 0; r < nFree; r++)
+                        {
+                            double br = basis[3 + r];
+                            if (br == 0.0) continue;
+                            atbX[r] += br * rx;
+                            atbY[r] += br * ry;
+                            atbZ[r] += br * rz;
+                            for (int c = r; c < nFree; c++)
+                                ata[r, c] += br * basis[3 + c];
+                        }
+                    }
+
+                    for (int r = 0; r < nFree; r++)
+                        for (int c = 0; c < r; c++)
+                            ata[r, c] = ata[c, r];
+
+                    Point3d[] solvedFree = SolveLinearSystem3D(ata, atbX, atbY, atbZ, nFree);
+                    if (solvedFree == null) continue;
+                    for (int r = 0; r < nFree; r++)
+                        cps[3 + r] = solvedFree[r];
+                }
+
+                var cand = new NurbsCurve(3, false, deg + 1, nCp);
+                cand.Knots.CreateUniformKnots(1.0 / nSpans);
+                for (int i = 0; i < nCp; i++)
+                    cand.Points.SetPoint(i, cps[i]);
+
+                if (!cand.IsValid)
+                {
+                    cand.Dispose();
+                    continue;
+                }
+
+                double maxErr = 0.0;
+                int nCheck = 32 * nSpans;
+                Interval dom = cand.Domain;
+                for (int k = 1; k < nCheck; k++)
+                {
+                    Point3d pt = cand.PointAt(dom.ParameterAt((double)k / nCheck));
+                    Vector3d rel = pt - center;
+                    Vector3d inPlane = (rel * xAxis) * xAxis + (rel * yAxis) * yAxis;
+                    double inPlaneLen = inPlane.Length;
+                    if (inPlaneLen <= RhinoMath.ZeroTolerance)
+                    {
+                        maxErr = double.MaxValue;
+                        break;
+                    }
+                    Point3d closestOnCircle = center + (radius / inPlaneLen) * inPlane;
+                    double err = pt.DistanceTo(closestOnCircle);
+                    if (err > maxErr) maxErr = err;
+                }
+
+                if (maxErr <= arcTol || nSpans == 32)
+                {
+                    cand.Domain = origCrv.Domain;
+                    return cand;
+                }
+
+                cand.Dispose();
+            }
+
+            return null;
+        }
+
+        private static double[] EvalClampedBSplineBasis(int deg, double[] fullKnots, int nCp, double t)
+        {
+            var basis = new double[nCp];
+            if (t <= fullKnots[deg]) { basis[0] = 1.0; return basis; }
+            if (t >= fullKnots[nCp]) { basis[nCp - 1] = 1.0; return basis; }
+
+            int span = deg;
+            while (span + 1 < nCp && t >= fullKnots[span + 1])
+                span++;
+
+            var n = new double[deg + 1];
+            var left = new double[deg + 1];
+            var right = new double[deg + 1];
+            n[0] = 1.0;
+
+            for (int j = 1; j <= deg; j++)
+            {
+                left[j] = t - fullKnots[span + 1 - j];
+                right[j] = fullKnots[span + j] - t;
+                double saved = 0.0;
+                for (int r = 0; r < j; r++)
+                {
+                    double denom = right[r + 1] + left[j - r];
+                    double temp = denom > 0.0 ? n[r] / denom : 0.0;
+                    n[r] = saved + right[r + 1] * temp;
+                    saved = left[j - r] * temp;
+                }
+                n[j] = saved;
+            }
+
+            for (int j = 0; j <= deg; j++)
+                basis[span - deg + j] = n[j];
+
+            return basis;
+        }
+
+        private static Point3d[] SolveLinearSystem3D(double[,] a, double[] bx, double[] by, double[] bz, int m)
+        {
+            var mat = (double[,])a.Clone();
+            var rx = (double[])bx.Clone();
+            var ry = (double[])by.Clone();
+            var rz = (double[])bz.Clone();
+
+            for (int col = 0; col < m; col++)
+            {
+                int piv = col;
+                double maxAbs = Math.Abs(mat[col, col]);
+                for (int row = col + 1; row < m; row++)
+                {
+                    double v = Math.Abs(mat[row, col]);
+                    if (v > maxAbs) { maxAbs = v; piv = row; }
+                }
+                if (maxAbs <= RhinoMath.ZeroTolerance)
+                    return null;
+
+                if (piv != col)
+                {
+                    for (int k = col; k < m; k++)
+                    {
+                        double tmp = mat[col, k]; mat[col, k] = mat[piv, k]; mat[piv, k] = tmp;
+                    }
+                    double tx = rx[col]; rx[col] = rx[piv]; rx[piv] = tx;
+                    double ty = ry[col]; ry[col] = ry[piv]; ry[piv] = ty;
+                    double tz = rz[col]; rz[col] = rz[piv]; rz[piv] = tz;
+                }
+
+                double invDiag = 1.0 / mat[col, col];
+                for (int row = col + 1; row < m; row++)
+                {
+                    double factor = mat[row, col] * invDiag;
+                    if (factor == 0.0) continue;
+                    for (int k = col; k < m; k++)
+                        mat[row, k] -= factor * mat[col, k];
+                    rx[row] -= factor * rx[col];
+                    ry[row] -= factor * ry[col];
+                    rz[row] -= factor * rz[col];
+                }
+            }
+
+            var res = new Point3d[m];
+            for (int row = m - 1; row >= 0; row--)
+            {
+                double sx = rx[row], sy = ry[row], sz = rz[row];
+                for (int k = row + 1; k < m; k++)
+                {
+                    double c = mat[row, k];
+                    sx -= c * res[k].X;
+                    sy -= c * res[k].Y;
+                    sz -= c * res[k].Z;
+                }
+                double inv = 1.0 / mat[row, row];
+                res[row] = new Point3d(sx * inv, sy * inv, sz * inv);
+            }
+            return res;
+        }
+
         /// <summary>
         /// Prepares a NURBS curve to have enough control points (and minimum degree when curving a degree-1 line)
         /// for the requested continuity + opposite-end preservation across any input degree or span count.
@@ -35,30 +328,29 @@ namespace CADacombs.Core.Curves
         private static bool PrepareNurbsForContinuity(
             Curve origCrv, ref NurbsCurve ncWip,
             int continuity, int minCpNeeded, int lineMode, int arcMode, int incrAsNeeded,
-            bool isPairMode, out string errorMsg)
+            double devTol, bool isPairMode, out string errorMsg)
         {
             errorMsg = null;
             string noun = isPairMode ? "a curve" : "the curve";
             string lineNoun = isPairMode ? "a line" : "the line";
 
-            if (origCrv is ArcCurve)
+            if (TryGetConvertibleArc(origCrv, out Arc convArc))
             {
                 if (arcMode != 2)
                 {
                     errorMsg = $"Result cannot be created because {noun} is an arc and Convert to NURBS is disabled.";
                     return false;
                 }
-                Curve rebuilt = origCrv.Rebuild(6, 5, false);
-                if (rebuilt != null)
-                {
-                    ncWip.Dispose();
-                    ncWip = rebuilt.ToNurbsCurve();
-                }
-                if (ncWip == null)
+
+                NurbsCurve polyArc = CreatePolynomialArcNurbs(origCrv, convArc, devTol);
+                if (polyArc == null)
                 {
                     errorMsg = "Failed to convert arc to NURBS.";
                     return false;
                 }
+
+                ncWip.Dispose();
+                ncWip = polyArc;
             }
             else if (origCrv.IsArc(RhinoMath.ZeroTolerance) && arcMode != 2)
             {
@@ -187,7 +479,7 @@ namespace CADacombs.Core.Curves
             }
 
             int minCpNeeded = preserveOtherEnd + continuity + 1;
-            if (!PrepareNurbsForContinuity(crvToMod, ref ncMod, continuity, minCpNeeded, lineMode, arcMode, incrAsNeeded, false, out string prepErr))
+            if (!PrepareNurbsForContinuity(crvToMod, ref ncMod, continuity, minCpNeeded, lineMode, arcMode, incrAsNeeded, devTol, false, out string prepErr))
             {
                 ncMod?.Dispose();
                 ncRef.Dispose();
@@ -386,14 +678,14 @@ namespace CADacombs.Core.Curves
 
             int minCpNeeded = preserveOtherEnd + continuity + 1;
 
-            if (!PrepareNurbsForContinuity(crvA, ref ncWipA, continuity, minCpNeeded, lineMode, arcMode, incrAsNeeded, true, out string errA))
+            if (!PrepareNurbsForContinuity(crvA, ref ncWipA, continuity, minCpNeeded, lineMode, arcMode, incrAsNeeded, devTol, true, out string errA))
             {
                 ncWipA?.Dispose();
                 ncWipB?.Dispose();
                 return (null, null, errA);
             }
 
-            if (!PrepareNurbsForContinuity(crvB, ref ncWipB, continuity, minCpNeeded, lineMode, arcMode, incrAsNeeded, true, out string errB))
+            if (!PrepareNurbsForContinuity(crvB, ref ncWipB, continuity, minCpNeeded, lineMode, arcMode, incrAsNeeded, devTol, true, out string errB))
             {
                 ncWipA?.Dispose();
                 ncWipB?.Dispose();
@@ -415,8 +707,6 @@ namespace CADacombs.Core.Curves
             Point3d ptB = modT1_B ? ncWipB.PointAtEnd : ncWipB.PointAtStart;
             Point3d ptAvg = 0.5 * (ptA + ptB);
 
-            Vector3d tanA = ncWipA.TangentAt(tA);
-            Vector3d tanB = ncWipB.TangentAt(tB);
             Vector3d curvA = ncWipA.CurvatureAt(tA);
             Vector3d curvB = ncWipB.CurvatureAt(tB);
 

@@ -104,7 +104,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 var optPrevInflections = new OptionToggle(MatchCrvOptions.PreventExtraInflections, "Allow", "Reject");
                 var optPreserveIntCont = new OptionToggle(MatchCrvOptions.PreserveInternalContinuity, "AllowDegrade", "Preserve");
 
-                var optDelete = new OptionToggle(MatchCrvOptions.DeleteInput, "Keep", "Delete");
+                var optDelete = new OptionToggle(MatchCrvOptions.DeleteInput, "No", "Yes");
                 var optDebug = new OptionToggle(MatchCrvOptions.Debug, "No", "Yes");
 
                 int idxContinuity = goCli.AddOptionList("Continuity", _continuityNames, MatchCrvOptions.Continuity);
@@ -134,7 +134,7 @@ namespace CADacombs.Commands.Modeling.Curves
                     idxMaxInt = goCli.AddOptionList("MaxInternalCont", _maxIntNames, MatchCrvOptions.MaxInternalContinuity == 3 ? 1 : 0);
                 }
 
-                goCli.AddOptionToggle("Action", ref optDelete);
+                goCli.AddOptionToggle("DeleteInput", ref optDelete);
                 goCli.AddOptionToggle("Debug", ref optDebug);
 
                 GetResult res = goCli.GetMultiple(2, 2);
