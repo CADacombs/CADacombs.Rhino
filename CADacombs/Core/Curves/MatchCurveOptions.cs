@@ -33,6 +33,9 @@ namespace CADacombs.Core.Curves
         public static int LineMode { get; set; } = 1;
         public static int ArcMode { get; set; } = 1;
 
+        // 0 = Lock, 1 = Extend/Trim, 2 = Deform
+        public static int NurbsMode { get; set; } = 2;
+
         // 0 = Deg, 1 = Span ct, 2 = None
         public static int IncrAsNeeded { get; set; } = 0;
 
@@ -75,6 +78,7 @@ namespace CADacombs.Core.Curves
 
             LineMode = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_LineMode", LineMode)));
             ArcMode = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_ArcMode", ArcMode)));
+            NurbsMode = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_NurbsMode", NurbsMode)));
             IncrAsNeeded = Math.Max(0, Math.Min(2, settings.GetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded)));
             PreventExtraInflections = settings.GetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
             PreserveInternalContinuity = settings.GetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);
@@ -103,6 +107,7 @@ namespace CADacombs.Core.Curves
 
             settings.SetInteger("MatchCrv_LineMode", LineMode);
             settings.SetInteger("MatchCrv_ArcMode", ArcMode);
+            settings.SetInteger("MatchCrv_NurbsMode", NurbsMode);
             settings.SetInteger("MatchCrv_IncrAsNeeded", IncrAsNeeded);
             settings.SetBool("MatchCrv_PreventExtraInflections", PreventExtraInflections);
             settings.SetBool("MatchCrv_PreserveInternalContinuity", PreserveInternalContinuity);

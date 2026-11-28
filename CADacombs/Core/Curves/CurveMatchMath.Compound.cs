@@ -16,24 +16,15 @@ namespace CADacombs.Core.Curves
             public bool IsPolyline { get; set; }
             public bool WorkIsT1 { get; set; }
 
-            // Joint between THIS envelope's modified child segment and THIS envelope's untouched sibling(s)
             public bool HasOuterJoint { get; set; }
             public Point3d OuterJointPoint { get; set; }
 
-            // True if either this level or a nested polyline end segment has an internal joint to protect
             public bool HasAnyInternalJoint => HasOuterJoint || (InnerEnvelope != null && InnerEnvelope.HasAnyInternalJoint);
 
-            // PolylineCurve state (when IsPolyline == true)
             public Point3d[] PolylinePoints { get; set; }
-
-            // PolyCurve state (when IsPolyline == false)
             public PolyCurve FlattenedPolyCurve { get; set; }
             public int EndSegmentIndex { get; set; }
-
-            // Optional nested unwrap (e.g., PolyCurve whose picked end segment is a multi-segment PolylineCurve)
             public CompoundEnvelope InnerEnvelope { get; set; }
-
-            // Outermost leaf segment extracted for single-segment solving
             public Curve LeafEndSegment { get; set; }
 
             public Curve Rewrap(Curve modifiedLeafSegment, double posTol)
@@ -59,9 +50,7 @@ namespace CADacombs.Core.Curves
                     }
 
                     if (IsPolyline)
-                    {
                         return RewrapPolyline(segToInsert);
-                    }
 
                     return RewrapPolyCurve(segToInsert);
                 }
@@ -76,7 +65,6 @@ namespace CADacombs.Core.Curves
             {
                 int n = PolylinePoints.Length;
 
-                // Keep as PolylineCurve when the modified end segment remains a LineCurve
                 if (modEndSeg is LineCurve modLine)
                 {
                     var pts = new Point3d[n];
@@ -90,7 +78,6 @@ namespace CADacombs.Core.Curves
                     return plOut.IsValid ? plOut : null;
                 }
 
-                // End segment became curved (e.g., Convert to NURBS): upgrade to PolyCurve without mutating segments
                 Curve untouchedPortion = null;
                 try
                 {
@@ -133,9 +120,7 @@ namespace CADacombs.Core.Curves
             {
                 int segCount = FlattenedPolyCurve.SegmentCount;
                 if (segCount == 1)
-                {
                     return modEndSeg.DuplicateCurve();
-                }
 
                 var segs = new List<Curve>(segCount);
                 var ownedCopies = new List<Curve>(segCount - 1);
@@ -171,7 +156,6 @@ namespace CADacombs.Core.Curves
 
             private static PolyCurve BuildPolyCurvePreservingSegments(IList<Curve> segments)
             {
-                // Prefer AppendSegment so neither untouched segments nor the matched end segment are altered
                 var pc = new PolyCurve();
                 bool allAppended = true;
                 for (int i = 0; i < segments.Count; i++)
@@ -192,7 +176,6 @@ namespace CADacombs.Core.Curves
 
                 pc.Dispose();
 
-                // Fallback to Append only if a loose user tolerance left a small gap above openNURBS segment tolerance
                 var fallbackPc = new PolyCurve();
                 for (int i = 0; i < segments.Count; i++)
                 {
@@ -218,7 +201,6 @@ namespace CADacombs.Core.Curves
                 InnerEnvelope?.Dispose();
                 InnerEnvelope = null;
 
-                // LeafEndSegment is owned by the deepest envelope; avoid double-disposing
                 if (!hadInner)
                 {
                     LeafEndSegment?.Dispose();
@@ -292,8 +274,6 @@ namespace CADacombs.Core.Curves
                 CompoundEnvelope inner = null;
                 Curve leafSeg = endSeg;
 
-                // Handle a PolyCurve whose picked end segment is itself a multi-segment PolylineCurve:
-                // keep outerJointPt at the PolyCurve segment boundary while inner tracks its own polyline vertex.
                 if (endSeg is PolylineCurve endPl && endPl.PointCount >= 3 &&
                     TrySplitCompoundCurve(endPl, workIsT1, out inner))
                 {
@@ -331,6 +311,7 @@ namespace CADacombs.Core.Curves
             int preserveOtherEnd,
             int lineMode,
             int arcMode,
+            int nurbsMode,
             int incrAsNeeded,
             double devTol,
             bool preventExtraInflections,
@@ -341,23 +322,25 @@ namespace CADacombs.Core.Curves
             double curvTolPct,
             bool debug)
         {
-            bool splitMod = TrySplitCompoundCurve(crvToMod, modT1, out CompoundEnvelope envMod);
-            bool splitRef = TrySplitCompoundCurve(crvRef, refT1, out CompoundEnvelope envRef);
+            CompoundEnvelope envMod;
+            CompoundEnvelope envRef;
+            bool splitMod = TrySplitCompoundCurve(crvToMod, modT1, out envMod);
+            bool splitRef = TrySplitCompoundCurve(crvRef, refT1, out envRef);
 
             try
             {
                 Curve workMod = splitMod ? envMod.LeafEndSegment : crvToMod;
                 Curve workRef = splitRef ? envRef.LeafEndSegment : crvRef;
 
-                // Internal joints of a PolylineCurve or PolyCurve must stay joined: None clamps to Position
                 int effPreserve = (splitMod && envMod.HasAnyInternalJoint)
                     ? Math.Max(preserveOtherEnd, 1)
                     : preserveOtherEnd;
 
                 var segRes = MatchSingleSegmentOneCurve(
                     workMod, workRef, modT1, refT1, continuity, effPreserve,
-                    lineMode, arcMode, incrAsNeeded, devTol, preventExtraInflections,
-                    preserveInternalContinuity, maxInternalContinuity, posTol, angleTolDeg, curvTolPct, debug);
+                    lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
+                    preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
+                    posTol, angleTolDeg, curvTolPct, debug);
 
                 if (segRes.Result == null)
                     return (null, segRes.ErrorMsg);
@@ -389,6 +372,7 @@ namespace CADacombs.Core.Curves
             int preserveOtherEnd,
             int lineMode,
             int arcMode,
+            int nurbsMode,
             int incrAsNeeded,
             double devTol,
             bool preventExtraInflections,
@@ -399,8 +383,10 @@ namespace CADacombs.Core.Curves
             double curvTolPct,
             bool debug)
         {
-            bool splitA = TrySplitCompoundCurve(crvA, modT1_A, out CompoundEnvelope envA);
-            bool splitB = TrySplitCompoundCurve(crvB, modT1_B, out CompoundEnvelope envB);
+            CompoundEnvelope envA;
+            CompoundEnvelope envB;
+            bool splitA = TrySplitCompoundCurve(crvA, modT1_A, out envA);
+            bool splitB = TrySplitCompoundCurve(crvB, modT1_B, out envB);
 
             try
             {
@@ -419,24 +405,23 @@ namespace CADacombs.Core.Curves
                 {
                     segRes = MatchSingleSegmentBothCurves(
                         workA, workB, modT1_A, modT1_B, continuity, effPresA,
-                        lineMode, arcMode, incrAsNeeded, devTol, preventExtraInflections,
-                        preserveInternalContinuity, maxInternalContinuity, posTol, angleTolDeg, curvTolPct, debug);
+                        lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
+                        preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
+                        posTol, angleTolDeg, curvTolPct, debug);
                 }
                 else if (effPresA > effPresB)
                 {
-                    // Curve A is compound (anchored at internal joint, preserve=1); Curve B is simple (preserve=0)
                     segRes = SolveAsymmetricCompoundAndSimple(
                         workA, modT1_A, workB, modT1_B,
-                        continuity, lineMode, arcMode, incrAsNeeded, devTol,
+                        continuity, lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
                         preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
                         posTol, angleTolDeg, curvTolPct, debug);
                 }
                 else
                 {
-                    // Curve B is compound (preserve=1); Curve A is simple (preserve=0)
                     var swapped = SolveAsymmetricCompoundAndSimple(
                         workB, modT1_B, workA, modT1_A,
-                        continuity, lineMode, arcMode, incrAsNeeded, devTol,
+                        continuity, lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
                         preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
                         posTol, angleTolDeg, curvTolPct, debug);
                     segRes = (swapped.ResultSimple, swapped.ResultCompound, swapped.ErrorMsg);
@@ -481,17 +466,13 @@ namespace CADacombs.Core.Curves
             }
         }
 
-        /// <summary>
-        /// Handles Average-mode matching when Preserve Other End = None (0) and one curve is a compound
-        /// end segment (clamped to Position = 1 so its internal joint stays joined) while the partner is
-        /// an open single-segment curve (retaining Preserve = None / rigid primitive motion).
-        /// </summary>
         private static (Curve ResultCompound, Curve ResultSimple, string ErrorMsg) SolveAsymmetricCompoundAndSimple(
             Curve compSeg, bool modT1_Comp,
             Curve simpleCrv, bool modT1_Simple,
             int continuity,
             int lineMode,
             int arcMode,
+            int nurbsMode,
             int incrAsNeeded,
             double devTol,
             bool preventExtraInflections,
@@ -502,38 +483,57 @@ namespace CADacombs.Core.Curves
             double curvTolPct,
             bool debug)
         {
-            GetOrientedEnds(compSeg, modT1_Comp, out Point3d pFixComp, out Point3d pWorkComp, out Vector3d tFixCompInto, out Vector3d tWorkCompOut);
-            GetOrientedEnds(simpleCrv, modT1_Simple, out Point3d pFixSimple, out Point3d pWorkSimple, out _, out Vector3d tWorkSimpleOut);
+            bool isArcComp, isLineComp;
+            Arc arcComp;
+            Line lineComp;
+            string lockErrComp;
+            SegmentAction actComp = ClassifyInputSegment(
+                compSeg, lineMode, arcMode, nurbsMode, true,
+                out isArcComp, out arcComp, out isLineComp, out lineComp, out lockErrComp);
+
+            if (actComp == SegmentAction.Locked)
+                return (null, null, lockErrComp);
+
+            bool isArcSimple, isLineSimple;
+            Arc arcSimple;
+            Line lineSimple;
+            string lockErrSimple;
+            SegmentAction actSimple = ClassifyInputSegment(
+                simpleCrv, lineMode, arcMode, nurbsMode, true,
+                out isArcSimple, out arcSimple, out isLineSimple, out lineSimple, out lockErrSimple);
+
+            if (actSimple == SegmentAction.Locked)
+                return (null, null, lockErrSimple);
+
+            // ExtendTrimNurbs never moves its opposite end, so Preserve=None and Preserve=Position are identical
+            if (actSimple == SegmentAction.ExtendTrimNurbs)
+            {
+                return MatchSingleSegmentBothCurves(
+                    compSeg, simpleCrv, modT1_Comp, modT1_Simple,
+                    continuity, 1, lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
+                    preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
+                    posTol, angleTolDeg, curvTolPct, debug);
+            }
+
+            Point3d pFixComp, pWorkComp, pFixSimple, pWorkSimple;
+            Vector3d tFixCompInto, tWorkCompOut, dummyIntoSimple, tWorkSimpleOut;
+            GetOrientedEnds(compSeg, modT1_Comp, out pFixComp, out pWorkComp, out tFixCompInto, out tWorkCompOut);
+            GetOrientedEnds(simpleCrv, modT1_Simple, out pFixSimple, out pWorkSimple, out dummyIntoSimple, out tWorkSimpleOut);
 
             Point3d ptAvg = 0.5 * (pWorkComp + pWorkSimple);
             BoundingBox refBounds = GetReferenceBounds(compSeg, simpleCrv);
             var pairCandidates = new List<(Curve CandA, Curve CandB, string Desc)>();
             string lastErr = null;
 
-            bool isArcSimple = TryGetPrimitiveArc(simpleCrv, arcMode, out Arc arcSimple);
-            Line lineSimple = Line.Unset;
-            bool isLineSimple = !isArcSimple && TryGetPrimitiveLine(simpleCrv, lineMode, out lineSimple);
-
-            bool isArcComp = TryGetPrimitiveArc(compSeg, arcMode, out Arc arcComp);
-            Line lineComp = Line.Unset;
-            bool isLineComp = !isArcComp && TryGetPrimitiveLine(compSeg, lineMode, out lineComp);
-
-            if ((isArcComp || isArcSimple) && arcMode == 0)
-                return (null, null, "Result cannot be created because a curve is an arc and Arcs is set to Lock.");
-            if ((isLineComp || isLineSimple) && lineMode == 0)
-                return (null, null, "Result cannot be created because a curve is a line and Lines is set to Lock.");
-
             double effPosTol = Math.Max(posTol, RhinoMath.ZeroTolerance);
             double effAngleTolDeg = RhinoMath.ToDegrees(Math.Max(RhinoMath.ToRadians(angleTolDeg), RhinoMath.SqrtEpsilon));
             double effCurvTolPct = Math.Max(curvTolPct, RhinoMath.SqrtEpsilon);
 
-            // Direction 1: Generate partway compound end-segment candidates (anchored at pFixComp, preserve=1),
-            // then match the simple curve to each candidate using preserve=0 (rigid if primitive).
             var compPartwaySeeds = new List<(Curve CandComp, string Desc)>();
 
             var symAtPos = MatchSingleSegmentBothCurves(
                 compSeg, simpleCrv, modT1_Comp, modT1_Simple,
-                continuity, 1, lineMode, arcMode, incrAsNeeded, devTol,
+                continuity, 1, lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
                 preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
                 posTol, angleTolDeg, curvTolPct, debug);
 
@@ -543,7 +543,7 @@ namespace CADacombs.Core.Curves
             }
             symAtPos.ResultB?.Dispose();
 
-            if (isLineComp && lineMode == 1)
+            if (actComp == SegmentAction.KeepPrimitive && isLineComp)
             {
                 var lcMid = MakeOrientedLineCurve(pFixComp, ptAvg, modT1_Comp);
                 if (lcMid != null && IsWithinWorkingScale(refBounds, lcMid))
@@ -559,7 +559,7 @@ namespace CADacombs.Core.Curves
                     else lcExt?.Dispose();
                 }
             }
-            else if (isArcComp && arcMode == 1)
+            else if (actComp == SegmentAction.KeepPrimitive && isArcComp)
             {
                 var acScale = MakeOrientedArcCurve(new Arc(pFixComp, tFixCompInto, ptAvg), modT1_Comp);
                 if (acScale != null && IsWithinWorkingScale(refBounds, acScale))
@@ -588,7 +588,7 @@ namespace CADacombs.Core.Curves
 
                 var simpleRes = MatchSingleSegmentOneCurve(
                     simpleCrv, seed.CandComp, modT1_Simple, modT1_Comp,
-                    continuity, 0, lineMode, arcMode, incrAsNeeded, devTol,
+                    continuity, 0, lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
                     preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
                     posTol, angleTolDeg, curvTolPct, debug);
 
@@ -603,14 +603,12 @@ namespace CADacombs.Core.Curves
                 }
             }
 
-            // Direction 2: Generate rigid partway candidates for the simple curve (at ptAvg, preserve=0),
-            // then match the compound end segment to each candidate using preserve=1 (internal joint locked).
             var simplePartwaySeeds = new List<(Curve CandSimple, string Desc)>();
             Vector3d sharedFlow = ComputeSharedFlowDirection(
                 tWorkCompOut, tWorkSimpleOut, pFixComp, pFixSimple,
                 isArcSimple ? arcSimple.Plane.ZAxis : (isArcComp ? arcComp.Plane.ZAxis : Vector3d.ZAxis));
 
-            if (isLineSimple && lineMode == 1)
+            if (actSimple == SegmentAction.KeepPrimitive && isLineSimple)
             {
                 if (continuity == 0)
                 {
@@ -625,7 +623,7 @@ namespace CADacombs.Core.Curves
                     simplePartwaySeeds.Add((lcRigid, "Asymmetric Compound(PresG0) + Simple Line(PresNone): Rigid Align"));
                 else lcRigid?.Dispose();
             }
-            else if (isArcSimple && arcMode == 1)
+            else if (actSimple == SegmentAction.KeepPrimitive && isArcSimple)
             {
                 if (continuity == 0)
                 {
@@ -649,7 +647,6 @@ namespace CADacombs.Core.Curves
             }
             else
             {
-                // Simple NURBS curve: rigid translate halfway to ptAvg as a seed
                 Curve movedNurbs = simpleCrv.DuplicateCurve();
                 movedNurbs.Transform(Transform.Translation(ptAvg - pWorkSimple));
                 if (movedNurbs.IsValid && IsWithinWorkingScale(refBounds, movedNurbs))
@@ -673,7 +670,7 @@ namespace CADacombs.Core.Curves
 
                 var compRes = MatchSingleSegmentOneCurve(
                     compSeg, seed.CandSimple, modT1_Comp, modT1_Simple,
-                    continuity, 1, lineMode, arcMode, incrAsNeeded, devTol,
+                    continuity, 1, lineMode, arcMode, nurbsMode, incrAsNeeded, devTol,
                     preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
                     posTol, angleTolDeg, curvTolPct, debug);
 

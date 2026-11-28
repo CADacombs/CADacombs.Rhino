@@ -21,6 +21,7 @@ namespace CADacombs.Commands.Modeling.Curves
         private readonly string[] _modifyNames = { "First", "Average", "MinimizeDev" };
         private readonly string[] _lineModeNames = { "Lock", "KeepAsLine", "ConvertToNURBS" };
         private readonly string[] _arcModeNames = { "Lock", "KeepAsArc", "ConvertToNURBS" };
+        private readonly string[] _nurbsModeNames = { "Lock", "ExtendTrim", "Deform" };
         private readonly string[] _incrNames = { "Deg", "SpanCt", "None" };
         private readonly string[] _maxIntNames = { "G2", "G3" };
 
@@ -112,6 +113,7 @@ namespace CADacombs.Commands.Modeling.Curves
                 int idxModify = goCli.AddOptionList("ModifyCurve", _modifyNames, MatchCrvOptions.ModifyMode);
                 int idxLineMode = goCli.AddOptionList("Lines", _lineModeNames, MatchCrvOptions.LineMode);
                 int idxArcMode = goCli.AddOptionList("Arcs", _arcModeNames, MatchCrvOptions.ArcMode);
+                int idxNurbsMode = goCli.AddOptionList("NURBS", _nurbsModeNames, MatchCrvOptions.NurbsMode);
                 int idxIncr = goCli.AddOptionList("IncrAsNeeded", _incrNames, MatchCrvOptions.IncrAsNeeded);
 
                 goCli.AddOptionToggle("CrvDevLimit", ref optLimitDev);
@@ -154,6 +156,7 @@ namespace CADacombs.Commands.Modeling.Curves
                     else if (option.Index == idxModify) MatchCrvOptions.ModifyMode = option.CurrentListOptionIndex;
                     else if (option.Index == idxLineMode) MatchCrvOptions.LineMode = option.CurrentListOptionIndex;
                     else if (option.Index == idxArcMode) MatchCrvOptions.ArcMode = option.CurrentListOptionIndex;
+                    else if (option.Index == idxNurbsMode) MatchCrvOptions.NurbsMode = option.CurrentListOptionIndex;
                     else if (option.Index == idxIncr) MatchCrvOptions.IncrAsNeeded = option.CurrentListOptionIndex;
                     else if (idxMaxInt != -1 && option.Index == idxMaxInt) MatchCrvOptions.MaxInternalContinuity = option.CurrentListOptionIndex == 1 ? 3 : 2;
 
@@ -215,14 +218,26 @@ namespace CADacombs.Commands.Modeling.Curves
             if (MatchCrvOptions.ModifyMode == 0) // First Curve
             {
                 if (MatchCrvOptions.Debug) RhinoApp.WriteLine("Modifying First Curve Only...");
-                var res = CurveMatchMath.MatchOneCurve(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
+                var res = CurveMatchMath.MatchOneCurve(
+                    cA, cB, bT1WorkEndA, bT1WorkEndB,
+                    MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd,
+                    MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.NurbsMode,
+                    MatchCrvOptions.IncrAsNeeded, currentDevTol,
+                    MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity,
+                    MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
                 resultA = res.Result;
                 lastErrorMsg = res.ErrorMsg;
             }
             else if (MatchCrvOptions.ModifyMode == 1) // Average
             {
                 if (MatchCrvOptions.Debug) RhinoApp.WriteLine("Modifying Both Curves (Average)...");
-                var bothResult = CurveMatchMath.MatchBothCurves(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
+                var bothResult = CurveMatchMath.MatchBothCurves(
+                    cA, cB, bT1WorkEndA, bT1WorkEndB,
+                    MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd,
+                    MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.NurbsMode,
+                    MatchCrvOptions.IncrAsNeeded, currentDevTol,
+                    MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity,
+                    MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
                 resultA = bothResult.ResultA;
                 resultB = bothResult.ResultB;
                 lastErrorMsg = bothResult.ErrorMsg;
@@ -231,9 +246,27 @@ namespace CADacombs.Commands.Modeling.Curves
             {
                 if (MatchCrvOptions.Debug) RhinoApp.WriteLine("Evaluating First, Second, and Both for least deviation...");
 
-                var resFirst = CurveMatchMath.MatchOneCurve(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
-                var resSecond = CurveMatchMath.MatchOneCurve(cB, cA, bT1WorkEndB, bT1WorkEndA, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
-                var bothResult = CurveMatchMath.MatchBothCurves(cA, cB, bT1WorkEndA, bT1WorkEndB, MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd, MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.IncrAsNeeded, currentDevTol, MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity, MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
+                var resFirst = CurveMatchMath.MatchOneCurve(
+                    cA, cB, bT1WorkEndA, bT1WorkEndB,
+                    MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd,
+                    MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.NurbsMode,
+                    MatchCrvOptions.IncrAsNeeded, currentDevTol,
+                    MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity,
+                    MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
+                var resSecond = CurveMatchMath.MatchOneCurve(
+                    cB, cA, bT1WorkEndB, bT1WorkEndA,
+                    MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd,
+                    MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.NurbsMode,
+                    MatchCrvOptions.IncrAsNeeded, currentDevTol,
+                    MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity,
+                    MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
+                var bothResult = CurveMatchMath.MatchBothCurves(
+                    cA, cB, bT1WorkEndA, bT1WorkEndB,
+                    MatchCrvOptions.Continuity, MatchCrvOptions.PreserveOtherEnd,
+                    MatchCrvOptions.LineMode, MatchCrvOptions.ArcMode, MatchCrvOptions.NurbsMode,
+                    MatchCrvOptions.IncrAsNeeded, currentDevTol,
+                    MatchCrvOptions.PreventExtraInflections, MatchCrvOptions.PreserveInternalContinuity, MatchCrvOptions.MaxInternalContinuity,
+                    MatchCrvOptions.PosTol, MatchCrvOptions.AngleTolDeg, MatchCrvOptions.CurvatureMagTolPct, MatchCrvOptions.Debug);
 
                 Curve candA = resFirst.Result;
                 Curve candB = resSecond.Result;
@@ -327,7 +360,8 @@ namespace CADacombs.Commands.Modeling.Curves
 
         private bool IsSelectionCloserToT1(Curve c, Point3d pt)
         {
-            if (!c.ClosestPoint(pt, out double t))
+            double t;
+            if (!c.ClosestPoint(pt, out t))
                 return pt.DistanceTo(c.PointAtEnd) < pt.DistanceTo(c.PointAtStart);
 
             double totalLen = c.GetLength();

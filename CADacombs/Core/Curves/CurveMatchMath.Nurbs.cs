@@ -974,5 +974,683 @@ namespace CADacombs.Core.Curves
 
             return (winner.ResultA, winner.ResultB, errorMsg);
         }
+        // ==============================================================================
+        // NURBS EXTEND / TRIM SOLVERS (ZERO KNOT ADDITIONS, EXACT KNOT MULTIPLICITIES)
+        // ==============================================================================
+
+        private static bool HasSameKnotMultiplicities(NurbsCurve orig, NurbsCurve cand)
+        {
+            if (orig == null || cand == null) return false;
+            if (orig.Degree != cand.Degree ||
+                orig.Points.Count != cand.Points.Count ||
+                orig.SpanCount != cand.SpanCount ||
+                orig.Knots.Count != cand.Knots.Count)
+            {
+                return false;
+            }
+
+            int i = 0;
+            while (i < orig.Knots.Count)
+            {
+                int mOrig = orig.Knots.KnotMultiplicity(i);
+                int mCand = cand.Knots.KnotMultiplicity(i);
+                if (mOrig != mCand) return false;
+                i += Math.Max(1, mOrig);
+            }
+            return true;
+        }
+
+        private static bool HasValidTrimmedNurbsStructure(NurbsCurve orig, NurbsCurve trimmed)
+        {
+            if (orig == null || trimmed == null || !trimmed.IsValid) return false;
+            if (trimmed.Degree != orig.Degree) return false;
+            if (trimmed.SpanCount > orig.SpanCount || trimmed.Points.Count > orig.Points.Count) return false;
+            return true;
+        }
+
+        private static NurbsCurve BuildMaxValidSmoothExtension(
+            NurbsCurve origNc, bool modT1, double desiredLength, BoundingBox refBounds)
+        {
+            if (origNc == null || !origNc.IsValid || desiredLength <= RhinoMath.ZeroTolerance)
+                return null;
+
+            CurveEnd side = modT1 ? CurveEnd.End : CurveEnd.Start;
+            double tryLen = desiredLength;
+
+            for (int step = 0; step < 8; step++)
+            {
+                if (tryLen <= RhinoMath.ZeroTolerance) break;
+
+                Curve ext = origNc.Extend(side, tryLen, CurveExtensionStyle.Smooth);
+                if (ext is NurbsCurve extNc &&
+                    extNc.IsValid &&
+                    HasSameKnotMultiplicities(origNc, extNc) &&
+                    IsWithinWorkingScale(refBounds, extNc))
+                {
+                    return extNc;
+                }
+
+                ext?.Dispose();
+                tryLen *= 0.5;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Cuts along probeExt (which equals origNc on origNc.Domain and smoothly extends beyond modT1)
+        /// at parameter tTarget, using origNc.Trim directly when trimming and probeExt.Trim when extending
+        /// so extended curves strictly retain identical knot multiplicities and control-point counts.
+        /// </summary>
+        private static NurbsCurve BuildTrimmedOrExtendedAtParameter(
+            NurbsCurve origNc, NurbsCurve probeExt, bool modT1, double tTarget, BoundingBox refBounds)
+        {
+            Interval origDom = origNc.Domain;
+            Interval probeDom = probeExt.Domain;
+
+            if (modT1)
+            {
+                if (tTarget <= origDom.T0 + RhinoMath.ZeroTolerance || tTarget > probeDom.T1 + RhinoMath.ZeroTolerance)
+                    return null;
+
+                if (Math.Abs(tTarget - origDom.T1) <= RhinoMath.ZeroTolerance)
+                    return (NurbsCurve)origNc.Duplicate();
+
+                if (tTarget < origDom.T1)
+                {
+                    Curve tr = origNc.Trim(origDom.T0, tTarget);
+                    NurbsCurve trNc = tr as NurbsCurve ?? tr?.ToNurbsCurve();
+                    if (!ReferenceEquals(tr, trNc)) tr?.Dispose();
+                    if (trNc != null && HasValidTrimmedNurbsStructure(origNc, trNc) && IsWithinWorkingScale(refBounds, trNc))
+                        return trNc;
+                    trNc?.Dispose();
+                    return null;
+                }
+
+                double clampedT1 = Math.Min(tTarget, probeDom.T1);
+                if (Math.Abs(clampedT1 - probeDom.T1) <= RhinoMath.ZeroTolerance)
+                    return (NurbsCurve)probeExt.Duplicate();
+
+                Curve extTr = probeExt.Trim(origDom.T0, clampedT1);
+                NurbsCurve extNc = extTr as NurbsCurve;
+                if (extNc != null && HasSameKnotMultiplicities(origNc, extNc) && IsWithinWorkingScale(refBounds, extNc))
+                    return extNc;
+                extTr?.Dispose();
+                return null;
+            }
+            else
+            {
+                if (tTarget >= origDom.T1 - RhinoMath.ZeroTolerance || tTarget < probeDom.T0 - RhinoMath.ZeroTolerance)
+                    return null;
+
+                if (Math.Abs(tTarget - origDom.T0) <= RhinoMath.ZeroTolerance)
+                    return (NurbsCurve)origNc.Duplicate();
+
+                if (tTarget > origDom.T0)
+                {
+                    Curve tr = origNc.Trim(tTarget, origDom.T1);
+                    NurbsCurve trNc = tr as NurbsCurve ?? tr?.ToNurbsCurve();
+                    if (!ReferenceEquals(tr, trNc)) tr?.Dispose();
+                    if (trNc != null && HasValidTrimmedNurbsStructure(origNc, trNc) && IsWithinWorkingScale(refBounds, trNc))
+                        return trNc;
+                    trNc?.Dispose();
+                    return null;
+                }
+
+                double clampedT0 = Math.Max(tTarget, probeDom.T0);
+                if (Math.Abs(clampedT0 - probeDom.T0) <= RhinoMath.ZeroTolerance)
+                    return (NurbsCurve)probeExt.Duplicate();
+
+                Curve extTr = probeExt.Trim(clampedT0, origDom.T1);
+                NurbsCurve extNc = extTr as NurbsCurve;
+                if (extNc != null && HasSameKnotMultiplicities(origNc, extNc) && IsWithinWorkingScale(refBounds, extNc))
+                    return extNc;
+                extTr?.Dispose();
+                return null;
+            }
+        }
+
+        private static (Curve Result, string ErrorMsg) SolveExtendTrimNurbsToFixedTarget(
+            Curve origCrv, bool modT1,
+            Curve crvRef, bool refT1,
+            int continuity, double devTol,
+            double posTol, double angleTolDeg, double curvTolPct, bool debug)
+        {
+            NurbsCurve origNc = origCrv as NurbsCurve ?? origCrv.ToNurbsCurve();
+            bool ownsOrigNc = !ReferenceEquals(origNc, origCrv);
+            if (origNc == null)
+                return (null, "Failed to evaluate NURBS curve for Extend/Trim.");
+
+            double effPosTol = Math.Max(posTol, RhinoMath.ZeroTolerance);
+            double effAngleTolDeg = RhinoMath.ToDegrees(Math.Max(RhinoMath.ToRadians(angleTolDeg), RhinoMath.SqrtEpsilon));
+            double effCurvTolPct = Math.Max(curvTolPct, RhinoMath.SqrtEpsilon);
+
+            Point3d pRef = refT1 ? crvRef.PointAtEnd : crvRef.PointAtStart;
+            Point3d pWork = modT1 ? origNc.PointAtEnd : origNc.PointAtStart;
+            double chordDist = pWork.DistanceTo(pRef);
+            double origLen = origNc.GetLength();
+            BoundingBox refBounds = GetReferenceBounds(origCrv, crvRef);
+
+            double probeLen = Math.Max(2.5 * chordDist, 0.75 * origLen);
+            NurbsCurve probeExt = BuildMaxValidSmoothExtension(origNc, modT1, probeLen, refBounds) ?? (NurbsCurve)origNc.Duplicate();
+
+            var candidates = new List<(Curve Crv, string Desc)>();
+            try
+            {
+                var paramSeeds = new List<double>();
+                double tOnOrig;
+                if (origNc.ClosestPoint(pRef, out tOnOrig) && origNc.PointAt(tOnOrig).DistanceTo(pRef) <= effPosTol)
+                    paramSeeds.Add(tOnOrig);
+
+                double tOnProbe;
+                if (probeExt.ClosestPoint(pRef, out tOnProbe) && probeExt.PointAt(tOnProbe).DistanceTo(pRef) <= effPosTol)
+                    paramSeeds.Add(tOnProbe);
+
+                foreach (double tHit in paramSeeds)
+                {
+                    NurbsCurve cand = BuildTrimmedOrExtendedAtParameter(origNc, probeExt, modT1, tHit, refBounds);
+                    if (cand == null) continue;
+
+                    if (AreCurvesAtContinuity(cand, modT1, crvRef, refT1, continuity, effPosTol, effAngleTolDeg, effCurvTolPct))
+                    {
+                        candidates.Add((cand, "NURBS Extend/Trim: Meet Fixed Target"));
+                    }
+                    else
+                    {
+                        cand.Dispose();
+                    }
+                }
+
+                if (candidates.Count == 0)
+                    return (null, "Result cannot be created because the NURBS curve cannot reach the target continuity by Extend/Trim alone.");
+
+                return EvaluateAnalyticalSingleCandidates(origCrv, candidates, devTol, debug);
+            }
+            finally
+            {
+                probeExt.Dispose();
+                if (ownsOrigNc) origNc.Dispose();
+            }
+        }
+
+        private static (Curve ResultA, Curve ResultB, string ErrorMsg) SolveBothExtendTrimNurbs(
+            Curve crvA, bool modT1_A,
+            Curve crvB, bool modT1_B,
+            int continuity, double devTol,
+            double posTol, double angleTolDeg, double curvTolPct, bool debug)
+        {
+            NurbsCurve origA = crvA as NurbsCurve ?? crvA.ToNurbsCurve();
+            NurbsCurve origB = crvB as NurbsCurve ?? crvB.ToNurbsCurve();
+            bool ownsA = !ReferenceEquals(origA, crvA);
+            bool ownsB = !ReferenceEquals(origB, crvB);
+
+            if (origA == null || origB == null)
+            {
+                if (ownsA) origA?.Dispose();
+                if (ownsB) origB?.Dispose();
+                return (null, null, "Failed to evaluate NURBS curves for Extend/Trim.");
+            }
+
+            double effPosTol = Math.Max(posTol, RhinoMath.ZeroTolerance);
+            double effAngleTolDeg = RhinoMath.ToDegrees(Math.Max(RhinoMath.ToRadians(angleTolDeg), RhinoMath.SqrtEpsilon));
+            double effCurvTolPct = Math.Max(curvTolPct, RhinoMath.SqrtEpsilon);
+
+            Point3d pWorkA = modT1_A ? origA.PointAtEnd : origA.PointAtStart;
+            Point3d pWorkB = modT1_B ? origB.PointAtEnd : origB.PointAtStart;
+            double gap = pWorkA.DistanceTo(pWorkB);
+            BoundingBox refBounds = GetReferenceBounds(crvA, crvB);
+            double diag = Math.Max(refBounds.Diagonal.Length, 1.0);
+
+            double probeLenA = Math.Max(3.0 * gap, Math.Max(origA.GetLength(), diag));
+            double probeLenB = Math.Max(3.0 * gap, Math.Max(origB.GetLength(), diag));
+
+            NurbsCurve probeA = BuildMaxValidSmoothExtension(origA, modT1_A, probeLenA, refBounds) ?? (NurbsCurve)origA.Duplicate();
+            NurbsCurve probeB = BuildMaxValidSmoothExtension(origB, modT1_B, probeLenB, refBounds) ?? (NurbsCurve)origB.Duplicate();
+
+            var candidates = new List<(Curve CandA, Curve CandB, string Desc)>();
+            try
+            {
+                var paramPairs = new List<(double tA, double tB)>();
+                double ixTol = Math.Max(effPosTol, 1e-7);
+
+                var ccx = Rhino.Geometry.Intersect.Intersection.CurveCurve(probeA, probeB, ixTol, ixTol);
+                if (ccx != null)
+                {
+                    foreach (var ev in ccx)
+                    {
+                        paramPairs.Add((ev.ParameterA, ev.ParameterB));
+                        if (ev.IsOverlap)
+                        {
+                            paramPairs.Add((ev.OverlapA.Mid, ev.OverlapB.Mid));
+                        }
+                    }
+                }
+
+                Point3d nearA, nearB;
+                if (probeA.ClosestPoints(probeB, out nearA, out nearB) && nearA.DistanceTo(nearB) <= ixTol)
+                {
+                    double tNearA, tNearB;
+                    if (probeA.ClosestPoint(nearA, out tNearA) && probeB.ClosestPoint(nearB, out tNearB))
+                        paramPairs.Add((tNearA, tNearB));
+                }
+
+                foreach (var pair in paramPairs)
+                {
+                    NurbsCurve candA = BuildTrimmedOrExtendedAtParameter(origA, probeA, modT1_A, pair.tA, refBounds);
+                    NurbsCurve candB = BuildTrimmedOrExtendedAtParameter(origB, probeB, modT1_B, pair.tB, refBounds);
+                    if (candA == null || candB == null)
+                    {
+                        candA?.Dispose();
+                        candB?.Dispose();
+                        continue;
+                    }
+
+                    if (AreCurvesAtContinuity(candA, modT1_A, candB, modT1_B, continuity, effPosTol, effAngleTolDeg, effCurvTolPct))
+                    {
+                        candidates.Add((candA, candB, "Both NURBS Extend/Trim: Intersection Meet"));
+                    }
+                    else
+                    {
+                        candA.Dispose();
+                        candB.Dispose();
+                    }
+                }
+
+                if (candidates.Count == 0)
+                    return (null, null, "Result cannot be created because the two NURBS curves do not meet at the requested continuity by Extend/Trim alone.");
+
+                return EvaluateAnalyticalPairCandidates(crvA, crvB, candidates, devTol, debug);
+            }
+            finally
+            {
+                probeA.Dispose();
+                probeB.Dispose();
+                if (ownsA) origA.Dispose();
+                if (ownsB) origB.Dispose();
+            }
+        }
+
+        private static (Curve ResultExtNurbs, Curve ResultPrim, string ErrorMsg) SolveExtendTrimNurbsAndPrimitive(
+            Curve nurbsCrv, bool modT1_Nurbs,
+            Curve primCrv, bool isArc, Arc origArc, Line origLine, bool modT1_Prim,
+            int continuity, int preserveOtherEnd, double devTol,
+            double posTol, double angleTolDeg, double curvTolPct, bool debug)
+        {
+            NurbsCurve origNc = nurbsCrv as NurbsCurve ?? nurbsCrv.ToNurbsCurve();
+            bool ownsNc = !ReferenceEquals(origNc, nurbsCrv);
+            if (origNc == null)
+                return (null, null, "Failed to evaluate NURBS curve for Extend/Trim.");
+
+            double effPosTol = Math.Max(posTol, RhinoMath.ZeroTolerance);
+            Point3d pFixNurbs, pWorkNurbs, pFixPrim, pWorkPrim;
+            Vector3d tFixNurbsInto, tWorkNurbsOut, tFixPrimInto, tWorkPrimOut;
+            GetOrientedEnds(origNc, modT1_Nurbs, out pFixNurbs, out pWorkNurbs, out tFixNurbsInto, out tWorkNurbsOut);
+            GetOrientedEnds(primCrv, modT1_Prim, out pFixPrim, out pWorkPrim, out tFixPrimInto, out tWorkPrimOut);
+
+            Point3d ptAvg = 0.5 * (pWorkNurbs + pWorkPrim);
+            double gap = pWorkNurbs.DistanceTo(pWorkPrim);
+            BoundingBox refBounds = GetReferenceBounds(nurbsCrv, primCrv);
+            double diag = Math.Max(refBounds.Diagonal.Length, 1.0);
+
+            double probeLen = Math.Max(2.5 * gap, Math.Max(origNc.GetLength(), diag));
+            NurbsCurve probeExt = BuildMaxValidSmoothExtension(origNc, modT1_Nurbs, probeLen, refBounds) ?? (NurbsCurve)origNc.Duplicate();
+
+            var pairCandidates = new List<(Curve CandA, Curve CandB, string Desc)>();
+            string lastErr = null;
+
+            try
+            {
+                Interval origDom = origNc.Domain;
+                Interval probeDom = probeExt.Domain;
+                double tOrigWork = modT1_Nurbs ? origDom.T1 : origDom.T0;
+
+                // Orientation-invariant parameter mapping u in [0.04, 1.0] from fixed end toward probe tip
+                double ParamFromFixedFraction(double u)
+                {
+                    return modT1_Nurbs
+                        ? probeDom.ParameterAt(u)
+                        : probeDom.ParameterAt(1.0 - u);
+                }
+
+                var tSeeds = new List<double> { tOrigWork };
+
+                Point3d[] projTargets =
+                {
+                    ptAvg,
+                    pWorkPrim,
+                    pWorkNurbs + 0.25 * (pWorkPrim - pWorkNurbs),
+                    pWorkNurbs + 0.75 * (pWorkPrim - pWorkNurbs)
+                };
+                foreach (Point3d pt in projTargets)
+                {
+                    double tProj;
+                    if (probeExt.ClosestPoint(pt, out tProj))
+                        tSeeds.Add(tProj);
+                }
+
+                double ixTol = Math.Max(effPosTol, 1e-7);
+                if (!isArc)
+                {
+                    Line infLine = new Line(pFixPrim, pFixPrim + tFixPrimInto);
+                    var clx = Rhino.Geometry.Intersect.Intersection.CurveLine(probeExt, infLine, ixTol, ixTol);
+                    if (clx != null)
+                    {
+                        foreach (var ev in clx)
+                            tSeeds.Add(ev.ParameterA);
+                    }
+                }
+                else
+                {
+                    using (var fullCircleCrv = new ArcCurve(new Circle(origArc.Plane, origArc.Radius)))
+                    {
+                        var ccx = Rhino.Geometry.Intersect.Intersection.CurveCurve(probeExt, fullCircleCrv, ixTol, ixTol);
+                        if (ccx != null)
+                        {
+                            foreach (var ev in ccx)
+                                tSeeds.Add(ev.ParameterA);
+                        }
+                    }
+                }
+
+                // Symmetric uniform samples across probeExt + 1D root-finding for exact G1/G2 kiss points
+                const int nGrid = 48;
+                var gridParams = new double[nGrid];
+                for (int k = 0; k < nGrid; k++)
+                {
+                    double u = 0.08 + 0.92 * ((double)k / (nGrid - 1));
+                    double tg = ParamFromFixedFraction(u);
+                    gridParams[k] = tg;
+                    if (k % 3 == 0) tSeeds.Add(tg);
+                }
+
+                // Outward flow tangent of candNurbs at parameter t (pointing from NURBS into Primitive)
+                Vector3d FlowOutAt(double t)
+                {
+                    Vector3d tan = probeExt.TangentAt(t);
+                    if (!modT1_Nurbs) tan.Reverse();
+                    tan.Unitize();
+                    return tan;
+                }
+
+                // 1D Root A: Line G1 tangency (line from pFixPrim to P(t) collinear with -FlowOutAt(t))
+                if (!isArc)
+                {
+                    Vector3d refN = Vector3d.CrossProduct(tFixPrimInto, pWorkNurbs - pFixPrim);
+                    if (!refN.Unitize()) refN = Vector3d.ZAxis;
+
+                    double LineTanResidual(double t)
+                    {
+                        Point3d p = probeExt.PointAt(t);
+                        Vector3d toFix = pFixPrim - p;
+                        if (!toFix.Unitize()) return 0.0;
+                        Vector3d flow = FlowOutAt(t);
+                        return Vector3d.CrossProduct(flow, toFix) * refN;
+                    }
+
+                    AddSignChangeRoots(gridParams, LineTanResidual, tSeeds);
+                }
+                else
+                {
+                    // 1D Root B: Arc Preserve-Tangency G1 kiss (Arc(pFixPrim, tFixPrimInto, P(t)) tangent matches FlowOutAt(t))
+                    Vector3d refN = origArc.Plane.ZAxis;
+                    double ArcKissResidual(double t)
+                    {
+                        Point3d p = probeExt.PointAt(t);
+                        Arc a = new Arc(pFixPrim, tFixPrimInto, p);
+                        if (!a.IsValid) return double.NaN;
+                        Vector3d arcIntoFromP;
+                        using (var ac = new ArcCurve(a))
+                        {
+                            arcIntoFromP = -ac.TangentAtEnd;
+                        }
+                        arcIntoFromP.Unitize();
+                        Vector3d flow = FlowOutAt(t);
+                        return Vector3d.CrossProduct(flow, arcIntoFromP) * refN;
+                    }
+
+                    AddSignChangeRoots(gridParams, ArcKissResidual, tSeeds);
+
+                    // 1D Root C: Arc Preserve-Position G2 osculating circle passing through pFixPrim
+                    double OscCircleResidual(double t)
+                    {
+                        Vector3d kVec = probeExt.CurvatureAt(t);
+                        double kLen = kVec.Length;
+                        if (kLen <= 1e-9) return double.NaN;
+                        double rOsc = 1.0 / kLen;
+                        Point3d cOsc = probeExt.PointAt(t) + kVec / (kLen * kLen);
+                        return cOsc.DistanceTo(pFixPrim) - rOsc;
+                    }
+
+                    AddSignChangeRoots(gridParams, OscCircleResidual, tSeeds);
+                }
+
+                double bestScore = double.MaxValue;
+                double bestT = double.NaN;
+
+                void TryEvaluateAtParameter(double tVal, string label)
+                {
+                    NurbsCurve candNc = BuildTrimmedOrExtendedAtParameter(origNc, probeExt, modT1_Nurbs, tVal, refBounds);
+                    if (candNc == null) return;
+
+                    if (GetMaximumDeviation(nurbsCrv, candNc) > devTol)
+                    {
+                        candNc.Dispose();
+                        lastErr = "Result cannot be created because it exceeds the Crv dev limit.";
+                        return;
+                    }
+
+                    double effAngDeg = RhinoMath.ToDegrees(Math.Max(RhinoMath.ToRadians(angleTolDeg), RhinoMath.SqrtEpsilon));
+                    double effCrvPct = Math.Max(curvTolPct, RhinoMath.SqrtEpsilon);
+                    if (AreCurvesAtContinuity(candNc, modT1_Nurbs, primCrv, modT1_Prim, continuity, effPosTol, effAngDeg, effCrvPct))
+                    {
+                        pairCandidates.Add((candNc.DuplicateCurve(), primCrv.DuplicateCurve(), label + " (Exact Meet)"));
+                    }
+
+                    var primRes = isArc
+                        ? SolveAnalyticalArcToFixedTarget(primCrv, origArc, modT1_Prim, candNc, modT1_Nurbs, continuity, preserveOtherEnd, devTol, posTol, angleTolDeg, curvTolPct, false)
+                        : SolveAnalyticalLineToFixedTarget(primCrv, origLine, modT1_Prim, candNc, modT1_Nurbs, continuity, preserveOtherEnd, devTol, posTol, angleTolDeg, curvTolPct, false);
+
+                    if (primRes.Result != null)
+                    {
+                        double sc = GetAverageDeviation(nurbsCrv, candNc, 20) + GetAverageDeviation(primCrv, primRes.Result, 20);
+                        if (sc < bestScore)
+                        {
+                            bestScore = sc;
+                            bestT = tVal;
+                        }
+                        pairCandidates.Add((candNc, primRes.Result, label));
+                    }
+                    else
+                    {
+                        candNc.Dispose();
+                        if (!string.IsNullOrEmpty(primRes.ErrorMsg)) lastErr = primRes.ErrorMsg;
+                    }
+                }
+
+                foreach (double tSeed in DeduplicateParameters(tSeeds, 1e-7 * probeDom.Length))
+                {
+                    TryEvaluateAtParameter(tSeed, "Hybrid NURBS(Extend/Trim) + Primitive");
+                }
+
+                // 1D coordinate polish around the best parameter so Preserve=Position / G0 achieves minimum deviation
+                if (!double.IsNaN(bestT))
+                {
+                    double step = 0.04 * probeDom.Length;
+                    double curT = bestT;
+                    for (int iter = 0; iter < 12; iter++)
+                    {
+                        double prevBest = bestScore;
+                        TryEvaluateAtParameter(curT + step, "Hybrid NURBS(Extend/Trim) + Primitive (Refined)");
+                        if (bestScore < prevBest - RhinoMath.ZeroTolerance) { curT = bestT; continue; }
+                        TryEvaluateAtParameter(curT - step, "Hybrid NURBS(Extend/Trim) + Primitive (Refined)");
+                        if (bestScore < prevBest - RhinoMath.ZeroTolerance) { curT = bestT; continue; }
+                        step *= 0.5;
+                    }
+                }
+
+                if (pairCandidates.Count == 0)
+                    return (null, null, lastErr ?? "Result cannot be created with NURBS set to Extend/Trim and the current constraints.");
+
+                return EvaluateAnalyticalPairCandidates(nurbsCrv, primCrv, pairCandidates, devTol, debug);
+            }
+            finally
+            {
+                probeExt.Dispose();
+                if (ownsNc) origNc.Dispose();
+            }
+        }
+
+        private static (Curve ResultExtNurbs, Curve ResultDeformNurbs, string ErrorMsg) SolveExtendTrimAndDeformNurbs(
+            Curve extNurbsCrv, bool modT1_Ext,
+            Curve deformCrv, bool modT1_Def,
+            int continuity, int preserveOtherEnd, int lineMode, int arcMode, int incrAsNeeded, double devTol,
+            bool preventExtraInflections, bool preserveInternalContinuity, int maxInternalContinuity,
+            double posTol, double angleTolDeg, double curvTolPct, bool debug)
+        {
+            NurbsCurve origExtNc = extNurbsCrv as NurbsCurve ?? extNurbsCrv.ToNurbsCurve();
+            bool ownsExt = !ReferenceEquals(origExtNc, extNurbsCrv);
+            if (origExtNc == null)
+                return (null, null, "Failed to evaluate NURBS curve for Extend/Trim.");
+
+            double effPosTol = Math.Max(posTol, RhinoMath.ZeroTolerance);
+            double effAngleTolDeg = RhinoMath.ToDegrees(Math.Max(RhinoMath.ToRadians(angleTolDeg), RhinoMath.SqrtEpsilon));
+            double effCurvTolPct = Math.Max(curvTolPct, RhinoMath.SqrtEpsilon);
+
+            Point3d pWorkExt = modT1_Ext ? origExtNc.PointAtEnd : origExtNc.PointAtStart;
+            Point3d pWorkDef = modT1_Def ? deformCrv.PointAtEnd : deformCrv.PointAtStart;
+            Point3d ptAvg = 0.5 * (pWorkExt + pWorkDef);
+            double gap = pWorkExt.DistanceTo(pWorkDef);
+            BoundingBox refBounds = GetReferenceBounds(extNurbsCrv, deformCrv);
+
+            double probeLen = Math.Max(2.5 * gap, origExtNc.GetLength());
+            NurbsCurve probeExt = BuildMaxValidSmoothExtension(origExtNc, modT1_Ext, probeLen, refBounds) ?? (NurbsCurve)origExtNc.Duplicate();
+
+            var pairCandidates = new List<(Curve CandA, Curve CandB, string Desc)>();
+            string lastErr = null;
+
+            try
+            {
+                double tOrigWork = modT1_Ext ? origExtNc.Domain.T1 : origExtNc.Domain.T0;
+                var tSeeds = new List<double> { tOrigWork };
+
+                Point3d[] sampleTargets =
+                {
+                    ptAvg,
+                    pWorkDef,
+                    pWorkExt + 0.25 * (pWorkDef - pWorkExt),
+                    pWorkExt + 0.75 * (pWorkDef - pWorkExt)
+                };
+                foreach (Point3d st in sampleTargets)
+                {
+                    double tProj;
+                    if (probeExt.ClosestPoint(st, out tProj))
+                        tSeeds.Add(tProj);
+                }
+
+                foreach (double tVal in DeduplicateParameters(tSeeds, 1e-6 * probeExt.Domain.Length))
+                {
+                    NurbsCurve candExt = BuildTrimmedOrExtendedAtParameter(origExtNc, probeExt, modT1_Ext, tVal, refBounds);
+                    if (candExt == null) continue;
+
+                    if (GetMaximumDeviation(extNurbsCrv, candExt) > devTol)
+                    {
+                        candExt.Dispose();
+                        lastErr = "Result cannot be created because it exceeds the Crv dev limit.";
+                        continue;
+                    }
+
+                    if (AreCurvesAtContinuity(candExt, modT1_Ext, deformCrv, modT1_Def, continuity, effPosTol, effAngleTolDeg, effCurvTolPct))
+                    {
+                        pairCandidates.Add((candExt.DuplicateCurve(), deformCrv.DuplicateCurve(), "Hybrid Extend/Trim + Deform NURBS (Exact Meet)"));
+                    }
+
+                    var defRes = SolveNurbsOneCurve(
+                        deformCrv, candExt, modT1_Def, modT1_Ext,
+                        continuity, preserveOtherEnd, lineMode, arcMode, incrAsNeeded, devTol,
+                        preventExtraInflections, preserveInternalContinuity, maxInternalContinuity,
+                        posTol, angleTolDeg, curvTolPct, debug);
+
+                    if (defRes.Result != null)
+                    {
+                        pairCandidates.Add((candExt, defRes.Result, "Hybrid Extend/Trim + Deform NURBS"));
+                    }
+                    else
+                    {
+                        candExt.Dispose();
+                        if (!string.IsNullOrEmpty(defRes.ErrorMsg)) lastErr = defRes.ErrorMsg;
+                    }
+                }
+
+                if (pairCandidates.Count == 0)
+                    return (null, null, lastErr ?? "Result cannot be created with the current constraints.");
+
+                return EvaluateAnalyticalPairCandidates(extNurbsCrv, deformCrv, pairCandidates, devTol, debug);
+            }
+            finally
+            {
+                probeExt.Dispose();
+                if (ownsExt) origExtNc.Dispose();
+            }
+        }
+
+        private static void AddSignChangeRoots(double[] grid, Func<double, double> f, List<double> rootsOut)
+        {
+            double prevT = grid[0];
+            double prevV = f(prevT);
+
+            for (int i = 1; i < grid.Length; i++)
+            {
+                double curT = grid[i];
+                double curV = f(curT);
+                if (!double.IsNaN(prevV) && !double.IsNaN(curV))
+                {
+                    if (Math.Abs(curV) <= 1e-12)
+                    {
+                        rootsOut.Add(curT);
+                    }
+                    else if ((prevV < 0.0 && curV > 0.0) || (prevV > 0.0 && curV < 0.0))
+                    {
+                        double lo = prevT, hi = curT, vLo = prevV;
+                        for (int b = 0; b < 42; b++)
+                        {
+                            double mid = 0.5 * (lo + hi);
+                            double vMid = f(mid);
+                            if (double.IsNaN(vMid) || Math.Abs(vMid) <= 1e-13)
+                            {
+                                lo = hi = mid;
+                                break;
+                            }
+                            if ((vLo < 0.0 && vMid > 0.0) || (vLo > 0.0 && vMid < 0.0))
+                                hi = mid;
+                            else
+                            {
+                                lo = mid;
+                                vLo = vMid;
+                            }
+                        }
+                        rootsOut.Add(0.5 * (lo + hi));
+                    }
+                }
+                prevT = curT;
+                prevV = curV;
+            }
+        }
+
+        private static List<double> DeduplicateParameters(List<double> raw, double minSep)
+        {
+            var unique = new List<double>(raw.Count);
+            foreach (double v in raw)
+            {
+                if (double.IsNaN(v) || double.IsInfinity(v)) continue;
+                bool exists = false;
+                for (int i = 0; i < unique.Count; i++)
+                {
+                    if (Math.Abs(unique[i] - v) <= minSep) { exists = true; break; }
+                }
+                if (!exists) unique.Add(v);
+            }
+            return unique;
+        }
+
     }
 }

@@ -12,7 +12,7 @@ namespace CADacombs.Core.Curves
         // PRIMITIVE DETECTION & ORIENTATION HELPERS
         // ==============================================================================
 
-        private static bool TryGetPrimitiveArc(Curve crv, int arcMode, out Arc arc)
+        private static bool TryGetInputArc(Curve crv, out Arc arc)
         {
             arc = Arc.Unset;
             if (crv == null || crv.IsClosed) return false;
@@ -25,7 +25,9 @@ namespace CADacombs.Core.Curves
                     arc.Reverse();
                 return true;
             }
-            if (arcMode != 2 && crv.TryGetArc(out arc, RhinoMath.ZeroTolerance))
+
+            if ((!(crv is NurbsCurve nc) || nc.IsRational) &&
+                crv.TryGetArc(out arc, RhinoMath.ZeroTolerance))
             {
                 if (!arc.IsValid || arc.IsCircle) return false;
                 if (arc.StartPoint.DistanceTo(crv.PointAtEnd) < arc.StartPoint.DistanceTo(crv.PointAtStart))
@@ -35,7 +37,7 @@ namespace CADacombs.Core.Curves
             return false;
         }
 
-        private static bool TryGetPrimitiveLine(Curve crv, int lineMode, out Line line)
+        private static bool TryGetInputLine(Curve crv, out Line line)
         {
             line = Line.Unset;
             if (crv == null || crv.IsClosed) return false;
@@ -45,12 +47,27 @@ namespace CADacombs.Core.Curves
                 line = lc.Line;
                 return line.IsValid && line.Length > RhinoMath.ZeroTolerance;
             }
-            if (lineMode != 2 && crv.IsLinear(RhinoMath.ZeroTolerance))
+
+            if (crv.IsLinear(RhinoMath.ZeroTolerance))
             {
                 line = new Line(crv.PointAtStart, crv.PointAtEnd);
                 return line.IsValid && line.Length > RhinoMath.ZeroTolerance;
             }
             return false;
+        }
+
+        private static bool TryGetPrimitiveArc(Curve crv, int arcMode, out Arc arc)
+        {
+            arc = Arc.Unset;
+            if (!TryGetInputArc(crv, out arc)) return false;
+            return crv is ArcCurve || arcMode != 2;
+        }
+
+        private static bool TryGetPrimitiveLine(Curve crv, int lineMode, out Line line)
+        {
+            line = Line.Unset;
+            if (!TryGetInputLine(crv, out line)) return false;
+            return crv is LineCurve || lineMode != 2;
         }
 
         private static void GetOrientedEnds(
